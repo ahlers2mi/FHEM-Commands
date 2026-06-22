@@ -1,17 +1,16 @@
 # FHEM-Commands
 
-FHEM-Hilfsmodul, um **mehrere FHEM-Befehle auf einmal auszuführen** – statt sie einzeln nacheinander in das Kommandofeld zu tippen. Optional wird beim ersten fehlerhaften Befehl gestoppt.
+FHEM-Modul, um **mehrere FHEM-Befehle auf einmal auszuführen** – über ein großes Eingabefenster (`textField-long`), in das ein kompletter Befehlsblock eingefügt wird. Optional wird beim ersten fehlerhaften Befehl gestoppt.
 
 ---
 
 ## Übersicht
 
-Das Modul stellt das FHEM-Kommando **`runcmds`** bereit. Damit kann ein ganzer Block von Befehlen (typischerweise mehrere `attr`-, `define`- oder `set`-Zeilen) **in einem Rutsch** eingefügt und abgearbeitet werden.
+Das Modul `Commands` stellt den Set-Befehl **`execute`** bereit. Dieser öffnet im FHEMWEB ein großes Texteingabefenster, in das ein ganzer Block von Befehlen (typischerweise mehrere `attr`-, `define`- oder `set`-Zeilen) **in einem Rutsch** eingefügt werden kann.
 
 - Ein Befehl pro Zeile.
 - Leerzeilen und mit `#` beginnende Zeilen werden ignoriert.
-- Standardmäßig stoppt die Abarbeitung beim **ersten Fehler**. Ein Befehl gilt als fehlerhaft, wenn er einen nicht-leeren Rückgabewert (Fehlermeldung) liefert.
-- Kein Device, kein Attribut, keine Verwaltung nötig.
+- Standardmäßig stoppt die Abarbeitung beim **ersten Fehler** (Attribut `stopOnError`). Ein Befehl gilt als fehlerhaft, wenn er einen nicht-leeren Rückgabewert (Fehlermeldung) liefert.
 
 ---
 
@@ -20,13 +19,13 @@ Das Modul stellt das FHEM-Kommando **`runcmds`** bereit. Damit kann ein ganzer B
 ### Manuell
 
 ```bash
-cp FHEM/99_Commands.pm /opt/fhem/FHEM/
+cp FHEM/98_Commands.pm /opt/fhem/FHEM/
 ```
 
-`99_`-Module werden beim FHEM-Start automatisch geladen. Einmalig ohne Neustart aktivieren:
+Danach in der FHEM-Konsole:
 
 ```
-reload 99_Commands
+reload 98_Commands
 ```
 
 ### Über FHEM Update
@@ -40,16 +39,17 @@ update
 
 ## Verwendung
 
-### Kommando `runcmds`
+### 1. Gerät anlegen (einmalig)
 
 ```
-runcmds [-c] <befehlsblock>
+define meineBefehle Commands
 ```
 
-Im FHEM-Kommandofeld einfach `runcmds` voranstellen und den kompletten Block auf einmal einfügen:
+### 2. Befehle ausführen
+
+Im FHEMWEB auf das Gerät klicken, beim Set-Befehl **`execute`** öffnet sich ein großes Eingabefenster. Dort den kompletten Block einfügen und absenden:
 
 ```
-runcmds
 # Sensoren
 attr poolControl poolSensor       MQTT2_Sonoff_TH10_01:poolTemp
 attr poolControl inflowSensor     MQTT2_Sonoff_TH10_01:solarTemp
@@ -59,29 +59,27 @@ set poolControl targetTemp   30
 set poolControl filterHours  5
 ```
 
-- Standard: Abbruch beim ersten Fehler – die Rückgabe nennt die betroffene Zeile.
-- Mit `-c` werden **alle** Befehle ausgeführt und auftretende Fehler am Ende gesammelt gemeldet:
+Die Zeilen werden nacheinander abgearbeitet. Bei einem Fehler stoppt die Ausführung (Standard) und das Reading `lastError` nennt die betroffene Zeile.
 
-```
-runcmds -c
-attr a room Wohnzimmer
-attr b room Küche
-```
+---
 
-### Perl-Funktion `runCmds`
+## Attribute
 
-Für die Verwendung in `notify`, `at` oder `99_myUtils`:
+| Attribut      | Standard | Beschreibung                                                                 |
+|---------------|----------|------------------------------------------------------------------------------|
+| `stopOnError` | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
+| `disable`     | 0        | `1` = Ausführung deaktivieren                                                 |
 
-```perl
-{ runCmds("attr a room X\nattr b room Y", 0) }
-```
+---
 
-| Parameter         | Beschreibung                                              |
-|-------------------|----------------------------------------------------------|
-| 1. Befehlsblock   | Befehle, durch Zeilenumbruch (`\n`) getrennt             |
-| 2. continueOnError| `0` = Stopp beim ersten Fehler (Standard), `1` = weiter  |
+## Readings
 
-Rückgabe: eine Zusammenfassung bzw. die gesammelten Fehlermeldungen als Text.
+| Reading      | Beschreibung                                                            |
+|--------------|-------------------------------------------------------------------------|
+| `state`      | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`         |
+| `executed`   | Anzahl erfolgreich ausgeführter Befehle                                 |
+| `errorCount` | Anzahl fehlerhafter Befehle des letzten Laufs                           |
+| `lastError`  | Zuletzt aufgetretener Fehler (mit Zeilennummer)                         |
 
 ---
 
