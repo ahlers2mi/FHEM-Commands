@@ -3,7 +3,7 @@ name: Update controls_Commands.txt
 on:
   push:
     paths:
-      - 'FHEM/98_Commands.pm'
+      - 'FHEM/99_Commands.pm'
   workflow_dispatch:
 
 jobs:
@@ -16,9 +16,9 @@ jobs:
 
       - name: Update controls_Commands.txt
         run: |
-          SIZE=$(wc -c < FHEM/98_Commands.pm)
+          SIZE=$(wc -c < FHEM/99_Commands.pm)
           DATE=$(date -u +"%Y-%m-%d_%H:%M:%S")
-          echo "UPD ${DATE} ${SIZE} FHEM/98_Commands.pm" > controls_Commands.txt
+          echo "UPD ${DATE} ${SIZE} FHEM/99_Commands.pm" > controls_Commands.txt
 
       - name: Commit updated controls_Commands.txt
         run: |
