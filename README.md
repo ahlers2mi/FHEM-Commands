@@ -61,14 +61,22 @@ set poolControl filterHours  5
 
 Die Zeilen werden nacheinander abgearbeitet. Bei einem Fehler stoppt die Ausführung (Standard) und das Reading `lastError` nennt die betroffene Zeile.
 
+### Schnellzugriff (ohne Detailseite)
+
+Beim Anlegen setzt das Modul automatisch `attr <name> webCmd execute` (sofern noch kein `webCmd` vergeben ist). Dadurch erscheint das Eingabefeld **direkt in der Geräteübersicht** – man muss das Gerät nicht erst über die Detailseite öffnen.
+
+- Entfernen: `deleteattr <name> webCmd`
+- Damit es noch schneller erreichbar ist, kann das Gerät in einen häufig sichtbaren Raum gelegt werden, z. B. `attr <name> room 0_Tools`.
+
 ---
 
 ## Attribute
 
-| Attribut      | Standard | Beschreibung                                                                 |
-|---------------|----------|------------------------------------------------------------------------------|
-| `stopOnError` | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
-| `disable`     | 0        | `1` = Ausführung deaktivieren                                                 |
+| Attribut      | Standard  | Beschreibung                                                                 |
+|---------------|-----------|------------------------------------------------------------------------------|
+| `stopOnError` | 1         | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
+| `disable`     | 0         | `1` = Ausführung deaktivieren                                                 |
+| `webCmd`      | `execute` | FHEMWEB-Standardattribut; zeigt das Eingabefeld inline in der Übersicht (wird beim Anlegen automatisch gesetzt) |
 
 ---
 
