@@ -13,7 +13,7 @@
 #
 #   define   Legt EIN Geraet aus einer (auch mehrzeiligen) Definition an bzw.
 #            aktualisiert es (defmod). Der mehrzeilige Perl-Block bleibt dabei
-#            erhalten, da intern CommandDefmod genutzt wird (kein Zerlegen an
+#            erhalten, da intern "defmod" via AnalyzeCommand genutzt wird (kein Zerlegen an
 #            ';' oder Zeilenumbruch). cfg-Stil mit ';;' und '\'-Zeilenfort-
 #            setzung wird automatisch in DEF-Editor-Stil (einfaches ';')
 #            konvertiert.
@@ -199,7 +199,7 @@ sub Commands_run {
 # Commands_define
 #   Legt EIN Geraet aus der (auch mehrzeiligen) Definition $block an bzw.
 #   aktualisiert es. Im Gegensatz zu execute/AnalyzeCommandChain wird hier
-#   CommandDefmod genutzt, das den DEF (inkl. mehrzeiligem Perl-Block) WOERTLICH
+#   "defmod" via AnalyzeCommand genutzt, das den DEF (inkl. Perl-Block) WOERTLICH
 #   uebernimmt und NICHT an ';' oder Zeilenumbruechen zerlegt.
 #
 #   Eingaben im cfg-Stil (mit ';;' und '\'-Zeilenfortsetzung) werden vorher in
@@ -222,7 +222,10 @@ sub Commands_define {
     return "leere Definition" if($block !~ /\S/);
 
     my ($devname) = split(/[ \t]+/, $block);
-    my $ret = CommandDefmod(undef, $block);
+    # defmod ueber AnalyzeCommand aufrufen (versionsunabhaengig; zerlegt - anders
+    # als AnalyzeCommandChain - NICHT an ';' oder Zeilenumbruch, der Perl-Block
+    # bleibt also erhalten).
+    my $ret = AnalyzeCommand(undef, "defmod " . $block);
 
     readingsBeginUpdate($hash);
     if(defined($ret) && $ret =~ /\S/) {
@@ -328,8 +331,8 @@ sub Commands_summary {
     <li><b>define</b> &ndash; oeffnet das Eingabefenster; legt <i>ein</i> Geraet
         aus der (auch mehrzeiligen) Definition per <code>defmod</code> an bzw.
         aktualisiert es. Der mehrzeilige Perl-Block bleibt erhalten (intern
-        <code>CommandDefmod</code>, kein Zerlegen an <code>;</code> oder
-        Zeilenumbruch). cfg-Stil mit <code>;;</code> und <code>\</code>-Zeilen-
+        <code>defmod</code> via <code>AnalyzeCommand</code>, kein Zerlegen an
+        <code>;</code> oder Zeilenumbruch). cfg-Stil mit <code>;;</code> und <code>\</code>-Zeilen-
         fortsetzung wird automatisch in einfaches <code>;</code> konvertiert; ein
         voranstehendes <code>define</code>/<code>defmod</code> ist optional.
         Beispiel-Inhalt:
