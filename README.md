@@ -61,6 +61,24 @@ set poolControl filterHours  5
 
 Die Zeilen werden nacheinander abgearbeitet. Bei einem Fehler stoppt die Ausführung (Standard) und das Reading `lastError` nennt die betroffene Zeile.
 
+### 3. Ein Gerät mit mehrzeiligem Perl-Block anlegen (`define`)
+
+Für ein einzelnes Gerät, dessen Definition einen **mehrzeiligen Perl-Block** enthält (Notify/DOIF), gibt es den Set-Befehl **`define`**. Anders als `execute` zerlegt er die Eingabe **nicht** zeilenweise, sondern legt per `defmod` genau ein Gerät an bzw. aktualisiert es – der Block bleibt erhalten:
+
+```
+define n_velux_regen notify MQTT2_RAIN_SOLAR:rain:.* {
+  if (ReadingsVal("MQTT2_RAIN_SOLAR","rain","false") eq "true" && ReadingsVal("Velux_1","pct",0) > 0){
+    fhem("set Velux_1 pct 0");
+    fhem("setreading Velux_1 auto_on off");
+  }
+}
+```
+
+- Einfügen wie im **DEF-Editor**: einfaches `;`, normale Zeilenumbrüche, kein `\`.
+- cfg-Stil mit `;;` und `\`-Zeilenfortsetzung wird automatisch in einfaches `;` konvertiert.
+- Ein voranstehendes `define`/`defmod` ist optional und wird abgeschnitten.
+- `defmod` legt neu an **oder** aktualisiert – derselbe Block kann zum Ändern erneut eingefügt werden.
+
 ---
 
 ## Attribute
@@ -76,14 +94,14 @@ Die Zeilen werden nacheinander abgearbeitet. Bei einem Fehler stoppt die Ausfüh
 
 | Reading      | Beschreibung                                                            |
 |--------------|-------------------------------------------------------------------------|
-| `state`      | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`         |
-| `executed`   | Anzahl erfolgreich ausgeführter Befehle                                 |
-| `errorCount` | Anzahl fehlerhafter Befehle des letzten Laufs                           |
-| `lastError`  | Zuletzt aufgetretener Fehler (mit Zeilennummer)                         |
+| `state`      | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`; nach `define`: `defined (<name>)` / `define error` |
+| `executed`   | Anzahl erfolgreich ausgeführter Befehle (`execute`)                     |
+| `errorCount` | Anzahl fehlerhafter Befehle des letzten Laufs (`execute`)               |
+| `lastError`  | Zuletzt aufgetretener Fehler (bei `execute` mit Zeilennummer)           |
 
 ---
 
 ## Hinweise
 
-- Innerhalb eines Befehls muss ein literales Semikolon wie in FHEM üblich als `;;` geschrieben werden.
+- Bei `execute` muss ein literales Semikolon innerhalb eines Befehls wie in FHEM üblich als `;;` geschrieben werden. Bei `define` ist das **nicht** nötig (einfaches `;` wie im DEF-Editor; `;;`/`\` werden zusätzlich toleriert).
 - `get`-Befehle, die einen Wert zurückliefern, werden als „Fehler" gewertet (nicht-leere Rückgabe). Das Modul ist für ausführende Befehle (`attr`, `define`, `set`, `delete`, …) gedacht.
