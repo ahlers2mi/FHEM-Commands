@@ -81,19 +81,11 @@ define n_velux_regen notify MQTT2_RAIN_SOLAR:rain:.* {
 
 ---
 
-### 4. Kompaktes Eingabefeld in der Raumansicht
-
-In der Raum-/Geräteübersicht zeigt das Gerät ein **breites Eingabefeld mit kleinem `+`-Button** (ähnlich der FHEM-Befehlszeile oben). Der Button schickt den Feldinhalt als `set <name> <summaryCmd> <text>` ab – standardmäßig `define`. Das Feld startet immer **leer** (kein hängender State). Über `summaryCmd` lässt sich auf `execute` umstellen, über `summaryWidth` die Breite anpassen.
-
----
-
 ## Attribute
 
 | Attribut       | Standard | Beschreibung                                                                 |
 |----------------|----------|------------------------------------------------------------------------------|
 | `stopOnError`  | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
-| `summaryCmd`   | define   | Welcher Set-Befehl vom `+`-Button der Raumansicht ausgelöst wird (`define`/`execute`) |
-| `summaryWidth` | 370px    | Breite des Eingabefelds in der Raumansicht (CSS-Wert)                         |
 | `disable`      | 0        | `1` = Ausführung deaktivieren                                                 |
 
 ---

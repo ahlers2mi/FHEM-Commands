@@ -13,16 +13,13 @@
 #
 #   define   Legt EIN Geraet aus einer (auch mehrzeiligen) Definition an bzw.
 #            aktualisiert es (defmod). Der mehrzeilige Perl-Block bleibt dabei
-#            erhalten, da intern "defmod" via AnalyzeCommand genutzt wird (kein Zerlegen an
-#            ';' oder Zeilenumbruch). cfg-Stil mit ';;' und '\'-Zeilenfort-
-#            setzung wird automatisch in DEF-Editor-Stil (einfaches ';')
-#            konvertiert.
-#
-# In der Raumansicht zeigt das Geraet ein kompaktes Eingabefeld mit "+"-Button
-# (FW_summaryFn); der Button schickt den Inhalt als "set <name> <summaryCmd>".
+#            erhalten, da intern "defmod" via AnalyzeCommand genutzt wird (kein
+#            Zerlegen an ';' oder Zeilenumbruch). cfg-Stil mit ';;' und
+#            '\'-Zeilenfortsetzung wird automatisch in DEF-Editor-Stil
+#            (einfaches ';') konvertiert.
 #
 # Autor:    ahlers2mi
-# Version:  v2.2.0
+# Version:  v2.1.1
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -44,14 +41,9 @@ sub Commands_Initialize {
     $hash->{SetFn}  = \&Commands_Set;
     $hash->{AttrFn} = \&Commands_Attr;
 
-    # Eigenes, kompaktes Eingabefeld (textarea + "+") in der Raumansicht.
-    $hash->{FW_summaryFn} = \&Commands_summary;
-
     $hash->{AttrList} =
           "disable:1,0 " .
           "stopOnError:1,0 " .
-          "summaryCmd:define,execute " .
-          "summaryWidth " .
           $readingFnAttributes;
 }
 
@@ -63,7 +55,7 @@ sub Commands_Define {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
 
-    $hash->{FVERSION} = "98_Commands.pm:v2.2.0";
+    $hash->{FVERSION} = "98_Commands.pm:v2.1.1";
 
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
@@ -243,41 +235,6 @@ sub Commands_define {
     return "Definition '$devname' angelegt/aktualisiert";
 }
 
-# ----------------------------------------------------------------------------
-# Commands_summary
-#   FHEMWEB-Rendering in der Raumansicht: ein breites Eingabefeld (textarea)
-#   plus kleiner "+"-Button. Der Button schickt den Inhalt als
-#   "set <name> <summaryCmd> <text>" an FHEM (Default summaryCmd = define).
-#
-#   So entsteht eine schlanke Eingabezeile wie die FHEM-Befehlszeile oben,
-#   ohne dass der vorherige State im Feld klebt (textarea startet leer).
-# ----------------------------------------------------------------------------
-sub Commands_summary {
-    my ($FW_wname, $name, $room, $extPage) = @_;
-
-    return "" if(IsDisabled($name));
-
-    my $cmd   = AttrVal($name, "summaryCmd", "define");      # define | execute
-    my $width = AttrVal($name, "summaryWidth", "370px");
-    my $id    = "ci_$name";
-
-    # Server-seitig gesetzte FHEMWEB-Globals (Basis-URL + CSRF-Token).
-    my $me   = (defined($main::FW_ME)   ? $main::FW_ME   : "/fhem");
-    my $csrf = (defined($main::FW_CSRF) ? $main::FW_CSRF : "");
-
-    my $set  = "set $name $cmd ";
-
-    my $html =
-        "<textarea id='$id' placeholder='$cmd ...' spellcheck='false' " .
-            "style='width:$width;height:30px;vertical-align:middle;resize:vertical'></textarea>" .
-        "<button type='button' title='$cmd ausfuehren' " .
-            "style='height:34px;width:34px;font-size:20px;margin-left:6px;vertical-align:middle;cursor:pointer' " .
-            "onclick=\"FW_cmd('$me?cmd='+encodeURIComponent('$set'+" .
-                "document.getElementById('$id').value)+'&XHR=1$csrf');return false;\">+</button>";
-
-    return $html;
-}
-
 1;
 
 =pod
@@ -349,27 +306,11 @@ sub Commands_summary {
   </ul>
   <br>
 
-  <a name="Commandssummary"></a>
-  <b>Raumansicht</b>
-  <ul>
-    In der Raum-/Geraeteuebersicht zeigt das Geraet ein kompaktes Eingabefeld
-    mit kleinem <code>+</code>-Button (aehnlich der FHEM-Befehlszeile). Der
-    Button schickt den Feldinhalt als <code>set &lt;name&gt; &lt;summaryCmd&gt;
-    &lt;text&gt;</code> ab (Default <code>define</code>). Das Feld startet leer
-    (kein haengender State).
-  </ul>
-  <br>
-
   <a name="Commandsattr"></a>
   <b>Attributes</b>
   <ul>
     <li><b>stopOnError</b> 1|0 &ndash; bei 1 (Standard) wird nach dem ersten
         fehlerhaften Befehl abgebrochen, bei 0 werden alle Befehle ausgefuehrt</li>
-    <li><b>summaryCmd</b> define|execute &ndash; welcher Set-Befehl vom
-        <code>+</code>-Button der Raumansicht ausgeloest wird (Default
-        <code>define</code>)</li>
-    <li><b>summaryWidth</b> &ndash; Breite des Eingabefelds in der Raumansicht
-        (CSS-Wert, Default <code>370px</code>)</li>
     <li><b>disable</b> 1|0 &ndash; deaktiviert die Ausfuehrung</li>
     <li><b>webCmd execute</b> &ndash; (FHEMWEB-Standardattribut) zeigt das
         Eingabefeld direkt in der Geraeteuebersicht an, sodass man das Geraet
