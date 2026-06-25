@@ -61,22 +61,40 @@ set poolControl filterHours  5
 
 Die Zeilen werden nacheinander abgearbeitet. Bei einem Fehler stoppt die Ausführung (Standard) und das Reading `lastError` nennt die betroffene Zeile.
 
-### Schnellzugriff (ohne Detailseite)
+### 3. Ein Gerät mit mehrzeiligem Perl-Block anlegen (`define`)
 
-Beim Anlegen setzt das Modul automatisch `attr <name> webCmd execute` (sofern noch kein `webCmd` vergeben ist). Dadurch erscheint das Eingabefeld **direkt in der Geräteübersicht** – man muss das Gerät nicht erst über die Detailseite öffnen.
+Für ein einzelnes Gerät, dessen Definition einen **mehrzeiligen Perl-Block** enthält (Notify/DOIF), gibt es den Set-Befehl **`define`**. Anders als `execute` zerlegt er die Eingabe **nicht** zeilenweise, sondern legt per `defmod` genau ein Gerät an bzw. aktualisiert es – der Block bleibt erhalten:
 
-- Entfernen: `deleteattr <name> webCmd`
-- Damit es noch schneller erreichbar ist, kann das Gerät in einen häufig sichtbaren Raum gelegt werden, z. B. `attr <name> room 0_Tools`.
+```
+define n_velux_regen notify MQTT2_RAIN_SOLAR:rain:.* {
+  if (ReadingsVal("MQTT2_RAIN_SOLAR","rain","false") eq "true" && ReadingsVal("Velux_1","pct",0) > 0){
+    fhem("set Velux_1 pct 0");
+    fhem("setreading Velux_1 auto_on off");
+  }
+}
+```
+
+- Einfügen wie im **DEF-Editor**: einfaches `;`, normale Zeilenumbrüche, kein `\`.
+- cfg-Stil mit `;;` und `\`-Zeilenfortsetzung wird automatisch in einfaches `;` konvertiert.
+- Ein voranstehendes `define`/`defmod` ist optional und wird abgeschnitten.
+- `defmod` legt neu an **oder** aktualisiert – derselbe Block kann zum Ändern erneut eingefügt werden.
+
+---
+
+### 4. Kompaktes Eingabefeld in der Raumansicht
+
+In der Raum-/Geräteübersicht zeigt das Gerät ein **breites Eingabefeld mit kleinem `+`-Button** (ähnlich der FHEM-Befehlszeile oben). Der Button schickt den Feldinhalt als `set <name> <summaryCmd> <text>` ab – standardmäßig `define`. Das Feld startet immer **leer** (kein hängender State). Über `summaryCmd` lässt sich auf `execute` umstellen, über `summaryWidth` die Breite anpassen.
 
 ---
 
 ## Attribute
 
-| Attribut      | Standard  | Beschreibung                                                                 |
-|---------------|-----------|------------------------------------------------------------------------------|
-| `stopOnError` | 1         | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
-| `disable`     | 0         | `1` = Ausführung deaktivieren                                                 |
-| `webCmd`      | `execute` | FHEMWEB-Standardattribut; zeigt das Eingabefeld inline in der Übersicht (wird beim Anlegen automatisch gesetzt) |
+| Attribut       | Standard | Beschreibung                                                                 |
+|----------------|----------|------------------------------------------------------------------------------|
+| `stopOnError`  | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
+| `summaryCmd`   | define   | Welcher Set-Befehl vom `+`-Button der Raumansicht ausgelöst wird (`define`/`execute`) |
+| `summaryWidth` | 370px    | Breite des Eingabefelds in der Raumansicht (CSS-Wert)                         |
+| `disable`      | 0        | `1` = Ausführung deaktivieren                                                 |
 
 ---
 
@@ -84,14 +102,14 @@ Beim Anlegen setzt das Modul automatisch `attr <name> webCmd execute` (sofern no
 
 | Reading      | Beschreibung                                                            |
 |--------------|-------------------------------------------------------------------------|
-| `state`      | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`         |
-| `executed`   | Anzahl erfolgreich ausgeführter Befehle                                 |
-| `errorCount` | Anzahl fehlerhafter Befehle des letzten Laufs                           |
-| `lastError`  | Zuletzt aufgetretener Fehler (mit Zeilennummer)                         |
+| `state`      | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`; nach `define`: `defined (<name>)` / `define error` |
+| `executed`   | Anzahl erfolgreich ausgeführter Befehle (`execute`)                     |
+| `errorCount` | Anzahl fehlerhafter Befehle des letzten Laufs (`execute`)               |
+| `lastError`  | Zuletzt aufgetretener Fehler (bei `execute` mit Zeilennummer)           |
 
 ---
 
 ## Hinweise
 
-- Innerhalb eines Befehls muss ein literales Semikolon wie in FHEM üblich als `;;` geschrieben werden.
+- Bei `execute` muss ein literales Semikolon innerhalb eines Befehls wie in FHEM üblich als `;;` geschrieben werden. Bei `define` ist das **nicht** nötig (einfaches `;` wie im DEF-Editor; `;;`/`\` werden zusätzlich toleriert).
 - `get`-Befehle, die einen Wert zurückliefern, werden als „Fehler" gewertet (nicht-leere Rückgabe). Das Modul ist für ausführende Befehle (`attr`, `define`, `set`, `delete`, …) gedacht.
