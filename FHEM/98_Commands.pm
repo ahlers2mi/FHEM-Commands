@@ -31,7 +31,7 @@ package main;
 use strict;
 use warnings;
 
-use vars qw($readingFnAttributes);
+use vars qw($readingFnAttributes $init_done);
 
 # ----------------------------------------------------------------------------
 # Commands_Initialize
@@ -68,6 +68,15 @@ sub Commands_Define {
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
     readingsSingleUpdate($hash, "state", "idle", 0);
+
+    # Schnellzugriff: Eingabefeld direkt in der Geraeteuebersicht anzeigen,
+    # damit man das Geraet nicht erst per Detailseite oeffnen muss.
+    # Nur beim interaktiven Anlegen setzen (nicht beim Konfig-Laden) und nur,
+    # wenn der Nutzer noch kein eigenes webCmd vergeben hat.
+    if($init_done && !AttrVal($hash->{NAME}, "webCmd", undef)) {
+        CommandAttr(undef, "$hash->{NAME} webCmd execute");
+    }
+
     return undef;
 }
 
@@ -359,6 +368,11 @@ sub Commands_summary {
     <li><b>summaryWidth</b> &ndash; Breite des Eingabefelds in der Raumansicht
         (CSS-Wert, Default <code>370px</code>)</li>
     <li><b>disable</b> 1|0 &ndash; deaktiviert die Ausfuehrung</li>
+    <li><b>webCmd execute</b> &ndash; (FHEMWEB-Standardattribut) zeigt das
+        Eingabefeld direkt in der Geraeteuebersicht an, sodass man das Geraet
+        nicht erst per Detailseite oeffnen muss. Wird beim Anlegen automatisch
+        gesetzt, falls noch kein webCmd vorhanden ist; kann jederzeit geaendert
+        oder mit <code>deleteattr &lt;name&gt; webCmd</code> entfernt werden.</li>
   </ul>
   <br>
 
