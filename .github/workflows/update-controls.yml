@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'FHEM/98_Commands.pm'
+      - 'www/pgm2/fhemweb_custom_link.js'
   workflow_dispatch:
 
 jobs:
@@ -16,9 +17,13 @@ jobs:
 
       - name: Update controls_Commands.txt
         run: |
-          SIZE=$(wc -c < FHEM/98_Commands.pm)
-          DATE=$(date -u +"%Y-%m-%d_%H:%M:%S")
-          echo "UPD ${DATE} ${SIZE} FHEM/98_Commands.pm" > controls_Commands.txt
+          : > controls_Commands.txt
+          for f in FHEM/98_Commands.pm www/pgm2/fhemweb_custom_link.js; do
+            [ -f "$f" ] || continue
+            SIZE=$(wc -c < "$f")
+            DATE=$(date -u +"%Y-%m-%d_%H:%M:%S")
+            echo "UPD ${DATE} ${SIZE} ${f}" >> controls_Commands.txt
+          done
 
       - name: Commit updated controls_Commands.txt
         run: |

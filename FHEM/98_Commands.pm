@@ -18,8 +18,13 @@
 #            '\'-Zeilenfortsetzung wird automatisch in DEF-Editor-Stil
 #            (einfaches ';') konvertiert.
 #
+# Zusaetzlich kann das Geraet einen Link neben der oberen FHEMWEB-Befehlszeile
+# einblenden (Attribut "webLink" = Auswahl der FHEMWEB-Geraete). Das noetige
+# JavaScript (www/pgm2/fhemweb_custom_link.js) wird mitgeliefert; Ziel/Label
+# bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
+#
 # Autor:    ahlers2mi
-# Version:  v2.1.1
+# Version:  v2.2.0
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -37,13 +42,16 @@ use vars qw($readingFnAttributes $init_done);
 sub Commands_Initialize {
     my ($hash) = @_;
 
-    $hash->{DefFn}  = \&Commands_Define;
-    $hash->{SetFn}  = \&Commands_Set;
-    $hash->{AttrFn} = \&Commands_Attr;
+    $hash->{DefFn}   = \&Commands_Define;
+    $hash->{UndefFn} = \&Commands_Undef;
+    $hash->{SetFn}   = \&Commands_Set;
+    $hash->{AttrFn}  = \&Commands_Attr;
 
     $hash->{AttrList} =
           "disable:1,0 " .
           "stopOnError:1,0 " .
+          "webLinkLabel " .
+          "webLink " .
           $readingFnAttributes;
 }
 
@@ -55,7 +63,7 @@ sub Commands_Define {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
 
-    $hash->{FVERSION} = "98_Commands.pm:v2.1.1";
+    $hash->{FVERSION} = "98_Commands.pm:v2.2.0";
 
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
@@ -68,6 +76,9 @@ sub Commands_Define {
     if($init_done && !AttrVal($hash->{NAME}, "webCmd", undef)) {
         CommandAttr(undef, "$hash->{NAME} webCmd execute");
     }
+
+    # Live-Dropdown der FHEMWEB-Geraete fuer das Attribut "webLink" bereitstellen.
+    Commands_updateAttrList($hash->{NAME});
 
     return undef;
 }
@@ -122,6 +133,72 @@ sub Commands_Attr {
             return $err;
         }
     }
+
+    # Web-Link an den ausgewaehlten FHEMWEB-Geraeten registrieren/entfernen.
+    # Nur zur Laufzeit (nicht beim Konfig-Laden) - beim Start sind die
+    # JavaScripts-Eintraege der WEB-Geraete bereits aus deren eigener Konfig da.
+    if($init_done && ($attr_name eq "webLink" || $attr_name eq "webLinkLabel")) {
+        my $list = ($attr_name eq "webLink")
+                     ? ($cmd eq "set" ? $attr_value : "")
+                     : AttrVal($name, "webLink", "");
+        Commands_applyWebLink($name, $list);
+    }
+
+    return undef;
+}
+
+# ----------------------------------------------------------------------------
+# Commands_updateAttrList
+#   Setzt die Geraete-Attributliste mit einem Live-Dropdown der vorhandenen
+#   FHEMWEB-Geraete fuer "webLink" (Mehrfachauswahl).
+# ----------------------------------------------------------------------------
+sub Commands_updateAttrList {
+    my ($name) = @_;
+    my @web = devspec2array("TYPE=FHEMWEB");
+    my $sel = @web ? "webLink:multiple," . join(",", @web) : "webLink";
+    setDevAttrList($name,
+        "disable:1,0 stopOnError:1,0 webLinkLabel $sel " . $readingFnAttributes);
+    return undef;
+}
+
+# ----------------------------------------------------------------------------
+# Commands_applyWebLink
+#   Traegt den Link (pgm2/fhemweb_custom_link.js mit dev/label in der Query)
+#   in die JavaScripts der gewuenschten FHEMWEB-Geraete ein und entfernt ihn
+#   aus den abgewaehlten. Idempotent, nur dieses Commands-Geraet betreffend.
+# ----------------------------------------------------------------------------
+sub Commands_applyWebLink {
+    my ($name, $listStr) = @_;
+
+    my $label = AttrVal($name, "webLinkLabel", "Commands");
+    (my $enc = $label) =~ s/([^A-Za-z0-9_.\-])/sprintf("%%%02X", ord($1))/ge;
+    my $entry = "pgm2/fhemweb_custom_link.js?dev=$name&label=$enc";
+
+    my %want = map { $_ => 1 }
+               grep { /\S/ }
+               split(/[\s,]+/, defined($listStr) ? $listStr : "");
+
+    foreach my $web (devspec2array("TYPE=FHEMWEB")) {
+        my $cur = AttrVal($web, "JavaScripts", "");
+        my @js  = grep { /\S/ } split(/[ \t]+/, $cur);
+        # bisherige Eintraege genau dieses Commands-Geraets entfernen
+        @js = grep { $_ !~ m{^pgm2/fhemweb_custom_link\.js\?dev=\Q$name\E(?:&|$)} } @js;
+        push @js, $entry if($want{$web});
+        my $new = join(" ", @js);
+        next if($new eq $cur);
+        if($new eq "") { CommandDeleteAttr(undef, "$web JavaScripts"); }
+        else           { CommandAttr(undef, "$web JavaScripts $new"); }
+    }
+    return undef;
+}
+
+# ----------------------------------------------------------------------------
+# Commands_Undef
+#   Beim Loeschen des Geraets den Link aus allen FHEMWEB-Geraeten entfernen.
+# ----------------------------------------------------------------------------
+sub Commands_Undef {
+    my ($hash, $name) = @_;
+    Commands_applyWebLink($name, "") if($init_done);
     return undef;
 }
 
@@ -317,6 +394,15 @@ sub Commands_define {
         nicht erst per Detailseite oeffnen muss. Wird beim Anlegen automatisch
         gesetzt, falls noch kein webCmd vorhanden ist; kann jederzeit geaendert
         oder mit <code>deleteattr &lt;name&gt; webCmd</code> entfernt werden.</li>
+    <li><b>webLink</b> &ndash; Auswahl (Mehrfach) der FHEMWEB-Geraete, in denen
+        ein Link <i>neben der oberen Befehlszeile</i> auf die Detailseite dieses
+        Geraets eingeblendet wird. Das Modul traegt dazu
+        <code>pgm2/fhemweb_custom_link.js</code> automatisch in das
+        <code>JavaScripts</code>-Attribut der gewaehlten WEB-Geraete ein und
+        entfernt es aus abgewaehlten. Nach Auswahl im Browser einmal
+        Strg+Shift+R.</li>
+    <li><b>webLinkLabel</b> &ndash; Beschriftung des Links (Default
+        <code>Commands</code>).</li>
   </ul>
   <br>
 
