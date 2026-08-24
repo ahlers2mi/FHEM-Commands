@@ -52,6 +52,7 @@ sub aufbau {
     utime(1000, 1000, glob("$root/FHEM/*.pm"), "$root/fhem.pl");
 
     %main::attr = ("global" => { modpath => $root });
+    %main::defs = ();          # sonst leben Geraete aus dem Vortest weiter
     @main::CMD = (); @main::LOG = (); @main::TIMER = ();
     %main::CMDRET = (); %main::BC_hash = ();
     $main::NOW = 1_700_000_000;
@@ -215,6 +216,82 @@ $main::attr{myCommander}{updateTimeout} = 60;
 Commands_Set($hash, "myCommander", "update");
 main::advance(90);                     # bc_ende kommt nie
 is("10 state", zustand(), "update: Zeit abgelaufen");
+
+# ---------------------------------------------------------------------------
+# 11: modifyAll - alle Geraete des Moduls, DEF bleibt erhalten
+#     (ein blankes "modify <name>" wuerde DEF auf undef setzen)
+# ---------------------------------------------------------------------------
+aufbau();
+$main::defs{myViz}  = { TYPE => "FHEMVIZ", DEF => "" };
+$main::defs{vizOpa} = { TYPE => "FHEMVIZ", DEF => "" };
+$main::defs{Remote1}= { TYPE => "DoRemote", DEF => "REMOTE=Remote1" };
+$main::defs{Remote2}= { TYPE => "DoRemote", DEF => "REMOTE=Remote2" };
+$main::attr{myCommander}{updatePost} =
+    "98_FHEMVIZ.pm = modifyAll\n"
+  . "98_Gartenbewaesserung.pm = modifyAll\n";   # Modul nicht geladen -> nichts
+Commands_Set($hash, "myCommander", "update");
+main::advance(12);
+beruehren("98_FHEMVIZ.pm");
+main::bc_ende();
+main::advance(6);
+my @mod = grep { /^modify / } @main::CMD;
+is("11 beide FHEMVIZ-Geraete", scalar(@mod), 2);
+ok("11 ohne DEF ohne Anhang", (grep { $_ eq "modify myViz" } @mod) == 1);
+ok("11 vizOpa dabei", (grep { $_ eq "modify vizOpa" } @mod) == 1);
+ok("11 Bewaesserung nicht angefasst",
+   (grep { /bewaesserung/ } @main::CMD) == 0);
+is("11 als EIN Nacharbeits-Schritt gezaehlt",
+   $hash->{READINGS}{updatePostCount}{VAL}, 1);
+
+# ---------------------------------------------------------------------------
+# 12: modifyAll gibt den vorhandenen DEF unveraendert mit
+# ---------------------------------------------------------------------------
+aufbau();
+$main::defs{Remote1} = { TYPE => "DoRemote", DEF => "REMOTE=Remote1" };
+$main::defs{Remote2} = { TYPE => "DoRemote", DEF => "REMOTE=Remote2" };
+$main::attr{myCommander}{updatePost} = "98_DoRemote.pm = modifyAll\n";
+Commands_Set($hash, "myCommander", "update");
+main::advance(12);
+beruehren("98_DoRemote.pm");
+main::bc_ende();
+main::advance(6);
+@mod = grep { /^modify / } @main::CMD;
+is("12 zwei Geraete", scalar(@mod), 2);
+ok("12 DEF von Remote1 erhalten",
+   (grep { $_ eq "modify Remote1 REMOTE=Remote1" } @mod) == 1);
+ok("12 DEF von Remote2 erhalten",
+   (grep { $_ eq "modify Remote2 REMOTE=Remote2" } @mod) == 1);
+
+# ---------------------------------------------------------------------------
+# 13: kein Geraet des Typs -> kein Befehl (devspec2array gibt sonst den
+#     Suchstring zurueck, das waere "modify TYPE=Leer")
+# ---------------------------------------------------------------------------
+aufbau();
+$main::attr{myCommander}{updatePost} = "98_FHEMVIZ.pm = modifyAll\n";
+Commands_Set($hash, "myCommander", "update");
+main::advance(12);
+beruehren("98_FHEMVIZ.pm");
+main::bc_ende();
+main::advance(6);
+ok("13 kein modify abgesetzt", (grep { /^modify / } @main::CMD) == 0);
+ok("13 kein TYPE= durchgerutscht", (grep { /TYPE=/ } @main::CMD) == 0);
+is("13 state sauber", zustand(), "update: 1 Modul(e) neu geladen");
+
+# ---------------------------------------------------------------------------
+# 14: ein fehlgeschlagenes modify landet in lastError
+# ---------------------------------------------------------------------------
+aufbau();
+$main::defs{myViz} = { TYPE => "FHEMVIZ", DEF => "" };
+$main::CMDRET{"^modify myViz"} = "Wrong syntax";
+$main::attr{myCommander}{updatePost} = "98_FHEMVIZ.pm = modifyAll\n";
+Commands_Set($hash, "myCommander", "update");
+main::advance(12);
+beruehren("98_FHEMVIZ.pm");
+main::bc_ende();
+main::advance(6);
+ok("14 state meldet Fehler", zustand() =~ /Fehler/);
+ok("14 lastError nennt das Geraet",
+   $hash->{READINGS}{lastError}{VAL} =~ /modify myViz -> Wrong syntax/);
 
 print "\n$tests Tests, $bad Fehler\n";
 exit($bad ? 1 : 0);

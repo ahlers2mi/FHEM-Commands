@@ -33,7 +33,7 @@ package main;
 use strict;
 use warnings;
 
-use vars qw($readingFnAttributes $init_done %BC_hash);
+use vars qw($readingFnAttributes $init_done %BC_hash %defs);
 
 # ----------------------------------------------------------------------------
 # Commands_Initialize
@@ -485,6 +485,51 @@ sub Commands_updTick {
 }
 
 # ----------------------------------------------------------------------------
+# Commands_updModifyAll
+#   Nacharbeits-Befehl "modifyAll": alle Geraete des gerade neu geladenen
+#   Moduls durch ihr Define schicken (NN_<Typ>.pm -> TYPE=<Typ>).
+#
+#   Warum nicht einfach "modify <geraet>" in updatePost schreiben: ein blankes
+#   "modify <name>" OHNE Argumente setzt DEF auf undef (fhem.pl, CommandModify:
+#   $hash->{DEF} = $a[1]). Bei Geraeten mit leerem DEF faellt das nicht auf,
+#   bei allen anderen loescht es die Definition. Den DEF stattdessen in das
+#   Attribut zu kopieren, waere die zweite schlechte Loesung: er veraltet dort
+#   still, und bei Modulen mit Zugangsdaten in der DEF stuende das Passwort
+#   noch ein zweites Mal in der Konfiguration.
+#
+#   Hier wird der aktuelle DEF gelesen und unveraendert wieder mitgegeben.
+#   Nebenbei entfaellt damit das Aufzaehlen der Geraetenamen.
+# ----------------------------------------------------------------------------
+sub Commands_updModifyAll {
+    my ($name, $mod) = @_;
+    my @fehler;
+
+    my ($typ) = $mod =~ m/^\d\d_(.+)\.pm$/;
+    if(!defined($typ)) {
+        push @fehler, "modifyAll: $mod ist kein Modulname der Form NN_<Typ>.pm";
+        return @fehler;
+    }
+
+    # devspec2array liefert den Suchstring zurueck, wenn nichts passt.
+    my @dev = grep { $defs{$_} } devspec2array("TYPE=$typ");
+    if(!@dev) {
+        Log3($name, 4, "$name: modifyAll $typ - keine Geraete");
+        return @fehler;
+    }
+
+    foreach my $d (@dev) {
+        my $def = InternalVal($d, "DEF", "");
+        my $ret = CommandModify(undef, $d . ($def =~ /\S/ ? " $def" : ""));
+        if(defined($ret) && $ret =~ /\S/) {
+            push @fehler, "modify $d -> $ret";
+            Log3($name, 2, "$name: modifyAll: modify $d fehlgeschlagen: $ret");
+        }
+    }
+    Log3($name, 3, "$name: modifyAll $typ - " . scalar(@dev) . " Geraet(e)");
+    return @fehler;
+}
+
+# ----------------------------------------------------------------------------
 # Commands_updFinish
 #   Geaenderte Module neu laden und die Nacharbeit ausfuehren.
 # ----------------------------------------------------------------------------
@@ -540,6 +585,14 @@ sub Commands_updFinish {
         next if(!defined($cmd));
         $mod .= ".pm" if($mod ne "*" && $mod !~ /\.pm$/);
         next if($mod ne "*" && !$ist{$mod});
+
+        if($cmd eq "modifyAll") {
+            my @f = Commands_updModifyAll($name, $mod);
+            push(@fehler, @f);
+            $nach++ if(!@f);
+            next;
+        }
+
         my $ret = AnalyzeCommandChain(undef, $cmd);
         if(defined($ret) && $ret =~ /\S/) {
             push @fehler, "$cmd -> $ret";
@@ -710,15 +763,28 @@ sub Commands_updFinish {
         der angegebenen Reihenfolge.
         <br><br>
         <code>
-        98_FHEMVIZ = modify myViz<br>
+        98_FHEMVIZ = modifyAll<br>
         98_FHEMVIZ = set myViz reload<br>
-        98_Gartenbewaesserung = modify bewaesserung<br>
+        98_Gartenbewaesserung = modifyAll<br>
         # nach jedem Update, egal was sich geaendert hat<br>
         * = save<br>
         </code>
         <br>
         Das Attribut ist <code>textField-long</code>, laesst sich also bequem
-        im FHEMWEB-Editor pflegen.</li>
+        im FHEMWEB-Editor pflegen.
+        <br><br>
+        <b>modifyAll</b> ist dabei kein FHEM-Befehl, sondern ein Schluesselwort
+        dieses Moduls: es schickt <i>alle</i> Geraete des gerade neu geladenen
+        Moduls durch ihr Define (<code>NN_&lt;Typ&gt;.pm</code> &rarr;
+        <code>TYPE=&lt;Typ&gt;</code>) und gibt dabei den vorhandenen
+        <code>DEF</code> unveraendert wieder mit. Ein von Hand geschriebenes
+        <code>modify &lt;geraet&gt;</code> <b>ohne</b> Argumente wuerde den
+        <code>DEF</code> loeschen (fhem.pl setzt <code>$hash-&gt;{DEF}</code> auf
+        den zweiten Parameter, und den gibt es dann nicht); den DEF ins Attribut
+        zu kopieren waere die zweite schlechte Loesung, weil er dort still
+        veraltet und bei Modulen mit Zugangsdaten in der Definition das Passwort
+        ein zweites Mal in der Konfiguration stuende. Nebenbei muessen die
+        Geraetenamen so gar nicht erst aufgezaehlt werden.</li>
     <li><b>updateTimeout</b> &ndash; Sekunden, nach denen
         <code>set &lt;name&gt; update</code> spaetestens aufhoert zu warten
         (Default 180). Reading <code>state</code> lautet dann
