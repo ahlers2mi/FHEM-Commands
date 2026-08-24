@@ -72,8 +72,28 @@ sub AnalyzeCommand {
 sub AnalyzeCommandChain { return AnalyzeCommand(@_); }
 sub CommandAttr { return undef; }
 sub CommandDeleteAttr { return undef; }
-sub devspec2array { return (); }
 sub setDevAttrList { return undef; }
+
+sub InternalVal {
+    my ($d, $i, $def) = @_;
+    return (defined($defs{$d}) && defined($defs{$d}{$i})) ? $defs{$d}{$i} : $def;
+}
+
+# Wie FHEM: passt nichts, kommt der Suchstring selbst zurueck.
+sub devspec2array {
+    my ($spec) = @_;
+    my ($t) = $spec =~ m/^TYPE=(.*)$/;
+    return ($spec) if(!defined($t));
+    my @d = sort grep { ($defs{$_}{TYPE} || "") eq $t } keys %defs;
+    return @d ? @d : ($spec);
+}
+
+sub CommandModify {
+    my ($cl, $def) = @_;
+    push @CMD, "modify $def";
+    foreach my $re (keys %CMDRET) { return $CMDRET{$re} if("modify $def" =~ /$re/); }
+    return undef;
+}
 
 sub InternalTimer {
     my ($t, $fn, $arg) = @_;

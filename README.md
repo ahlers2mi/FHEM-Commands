@@ -126,12 +126,27 @@ Die Nacharbeit steht im Attribut `updatePost`, eine Zeile je Schritt im Format
 `<Modul> = <Befehl>` (Endung `.pm` optional, `*` = immer):
 
 ```
-98_FHEMVIZ = modify myViz
+98_FHEMVIZ = modifyAll
 98_FHEMVIZ = set myViz reload
-98_Gartenbewaesserung = modify bewaesserung
+98_Gartenbewaesserung = modifyAll
 # nach jedem Update, egal was sich geändert hat
 * = save
 ```
+
+**`modifyAll`** ist kein FHEM-Befehl, sondern ein Schlüsselwort dieses Moduls:
+es schickt *alle* Geräte des gerade neu geladenen Moduls durch ihr Define
+(`NN_<Typ>.pm` → `TYPE=<Typ>`) und gibt dabei den vorhandenen `DEF`
+**unverändert** wieder mit. Zwei Gründe, warum es das gibt:
+
+- Ein von Hand geschriebenes `modify <gerät>` **ohne** Argumente *löscht* den
+  `DEF` — fhem.pl setzt `$hash->{DEF}` auf den zweiten Parameter, und den gibt
+  es dann nicht. Bei Geräten mit leerem DEF fällt das nie auf, bei allen anderen
+  schon.
+- Den DEF stattdessen ins Attribut zu kopieren wäre die zweite schlechte
+  Lösung: er veraltet dort still, und bei Modulen mit Zugangsdaten in der
+  Definition stünde das Passwort ein zweites Mal in der Konfiguration.
+
+Nebenbei müssen die Gerätenamen so gar nicht erst aufgezählt werden.
 
 Da der Aufruf asynchron weiterläuft, steht das Ergebnis im Reading `state`
 (`update: 2 Modul(e) neu geladen`), die Dateinamen in `updated`.
@@ -144,7 +159,7 @@ Da der Aufruf asynchron weiterläuft, steht das Ergebnis im Reading `state`
 |-----------------|----------|------------------------------------------------------------------------------|
 | `stopOnError`   | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
 | `disable`       | 0        | `1` = Ausführung deaktivieren                                                 |
-| `updatePost`    | –        | Nacharbeit für `set … update`: je Zeile `<Modul> = <Befehl>`, `*` = immer     |
+| `updatePost`    | –        | Nacharbeit für `set … update`: je Zeile `<Modul> = <Befehl>`, `*` = immer; `modifyAll` als Befehl = alle Geräte des Moduls neu definieren |
 | `updateTimeout` | 180      | Sekunden, nach denen `set … update` spätestens aufhört zu warten              |
 | `updateMinWait` | 30       | Notnagel: Mindestwartezeit, falls der Hintergrundlauf nicht auffindbar ist     |
 | `webLink`       | –        | FHEMWEB-Geräte, in denen ein Link auf die Detailseite eingeblendet wird       |
