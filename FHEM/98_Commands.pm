@@ -24,7 +24,7 @@
 # bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
 #
 # Autor:    ahlers2mi
-# Version:  v2.2.0
+# Version:  v2.3.0
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -52,6 +52,8 @@ sub Commands_Initialize {
           "stopOnError:1,0 " .
           "webLinkLabel " .
           "webLink " .
+          "updatePost:textField-long " .
+          "updateTimeout " .
           $readingFnAttributes;
 }
 
@@ -63,7 +65,7 @@ sub Commands_Define {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
 
-    $hash->{FVERSION} = "98_Commands.pm:v2.2.0";
+    $hash->{FVERSION} = "98_Commands.pm:v2.3.0";
 
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
@@ -96,7 +98,7 @@ sub Commands_Set {
     my ($hash, $name, $cmd, @args) = @_;
     return "\"set $name\" needs at least one argument" if(!defined($cmd));
 
-    my $list = "execute:textField-long define:textField-long";
+    my $list = "execute:textField-long define:textField-long update:noArg";
 
     if($cmd eq "execute") {
         return "$name is disabled" if(IsDisabled($name));
@@ -114,6 +116,11 @@ sub Commands_Set {
         my $block = join(" ", @args);
         return "no definition given" if($block !~ /\S/);
         return Commands_define($hash, $block);
+    }
+
+    if($cmd eq "update") {
+        return "$name is disabled" if(IsDisabled($name));
+        return Commands_updStart($hash);
     }
 
     return "Unknown argument $cmd, choose one of $list";
@@ -157,7 +164,8 @@ sub Commands_updateAttrList {
     my @web = devspec2array("TYPE=FHEMWEB");
     my $sel = @web ? "webLink:multiple," . join(",", @web) : "webLink";
     setDevAttrList($name,
-        "disable:1,0 stopOnError:1,0 webLinkLabel $sel " . $readingFnAttributes);
+        "disable:1,0 stopOnError:1,0 webLinkLabel $sel "
+        . "updatePost:textField-long updateTimeout " . $readingFnAttributes);
     return undef;
 }
 
@@ -198,6 +206,8 @@ sub Commands_applyWebLink {
 # ----------------------------------------------------------------------------
 sub Commands_Undef {
     my ($hash, $name) = @_;
+    RemoveInternalTimer($hash);          # ein laufendes "update" nicht weiterticken
+    delete $hash->{helper}{upd};
     Commands_applyWebLink($name, "") if($init_done);
     return undef;
 }
@@ -312,6 +322,177 @@ sub Commands_define {
     return "Definition '$devname' angelegt/aktualisiert";
 }
 
+# ----------------------------------------------------------------------------
+# Commands_updModDir / Commands_updSnapshot
+#   Verzeichnis der FHEM-Module und ein Abbild ihrer Aenderungszeiten.
+#   BEWUSST keine Liste von Modulnamen: welche Module sich aendern, sagt das
+#   Dateisystem. Eine gepflegte Aufzaehlung ist genau die Stelle, an der das
+#   naechste Repo vergessen wird.
+# ----------------------------------------------------------------------------
+sub Commands_updModDir {
+    my $mp = AttrVal("global", "modpath", ".");
+    return "$mp/FHEM";
+}
+
+sub Commands_updSnapshot {
+    my $dir = Commands_updModDir();
+    my %st;
+    if(opendir(my $dh, $dir)) {
+        foreach my $f (readdir($dh)) {
+            next if($f !~ /^\d\d_.+\.pm$/);
+            my @s = stat("$dir/$f");
+            $st{$f} = @s ? "$s[9]/$s[7]" : "?";   # mtime/groesse
+        }
+        closedir($dh);
+    }
+    return \%st;
+}
+
+# ----------------------------------------------------------------------------
+# Commands_updStart
+#   set <name> update: "update all" anstossen und danach GENAU die Module neu
+#   laden, deren Datei sich geaendert hat - plus die Nacharbeit aus dem
+#   Attribut updatePost.
+#
+#   Warum nicht einfach warten und dann reloaden: "update" kann im Hintergrund
+#   laufen (attr global updateInBackground) und braucht je nach Anzahl der
+#   Quellen unterschiedlich lange. Statt an Ereignisnamen zu raten, wird das
+#   Modulverzeichnis beobachtet: hat sich zwei Runden lang nichts mehr
+#   geruehrt, ist das Update durch.
+# ----------------------------------------------------------------------------
+sub Commands_updStart {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+
+    return "update laeuft bereits" if($hash->{helper}{upd});
+
+    my $vorher = Commands_updSnapshot();
+    my $ret = AnalyzeCommand(undef, "update all");
+    $ret = "" if(!defined($ret));
+
+    # FHEM sagt selbst, wenn ein Neustart noetig ist (fhem.pl, Kernmodule).
+    # Dann NICHT weitermachen: ein halb geladener Zustand ist schlimmer als
+    # ein Update, das sichtbar stehenbleibt.
+    if($ret =~ /restart/i) {
+        readingsBeginUpdate($hash);
+        readingsBulkUpdate($hash, "lastError", "FHEM-Neustart noetig - kein reload ausgefuehrt");
+        readingsBulkUpdate($hash, "state",     "update: Neustart noetig");
+        readingsEndUpdate($hash, 1);
+        Log3($name, 2, "$name: update verlangt einen FHEM-Neustart, breche ab");
+        return "FHEM-Neustart noetig:\n$ret";
+    }
+
+    $hash->{helper}{upd} = {
+        vorher  => $vorher,
+        letzte  => Commands_updSnapshot(),
+        ruhig   => 0,
+        start   => time(),
+        ausgabe => $ret,
+    };
+
+    readingsSingleUpdate($hash, "state", "update laeuft", 1);
+    Log3($name, 3, "$name: update all angestossen, warte auf Ruhe im Modulverzeichnis");
+
+    InternalTimer(gettimeofday() + 5, "Commands_updTick", $hash, 0);
+    return "update laeuft - das Ergebnis steht gleich im Reading state";
+}
+
+# ----------------------------------------------------------------------------
+# Commands_updTick
+#   Alle 5 s nachsehen. Zwei Runden ohne Aenderung = fertig; nach
+#   updateTimeout (Default 180 s) wird abgebrochen und mit dem gearbeitet,
+#   was da ist.
+# ----------------------------------------------------------------------------
+sub Commands_updTick {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    my $u    = $hash->{helper}{upd};
+    return if(!$u);
+
+    my $jetzt = Commands_updSnapshot();
+    my $gleich = (join("\0", map { "$_=$jetzt->{$_}" } sort keys %$jetzt)
+               eq join("\0", map { "$_=$u->{letzte}{$_}" } sort keys %{$u->{letzte}}));
+    $u->{ruhig} = $gleich ? $u->{ruhig} + 1 : 0;
+    $u->{letzte} = $jetzt;
+
+    my $frist = AttrVal($name, "updateTimeout", 180);
+    if($u->{ruhig} >= 2 || (time() - $u->{start}) > $frist) {
+        return Commands_updFinish($hash, (time() - $u->{start}) > $frist);
+    }
+    InternalTimer(gettimeofday() + 5, "Commands_updTick", $hash, 0);
+    return undef;
+}
+
+# ----------------------------------------------------------------------------
+# Commands_updFinish
+#   Geaenderte Module neu laden und die Nacharbeit ausfuehren.
+# ----------------------------------------------------------------------------
+sub Commands_updFinish {
+    my ($hash, $frist) = @_;
+    my $name = $hash->{NAME};
+    my $u    = delete $hash->{helper}{upd};
+    return if(!$u);
+
+    my $jetzt = Commands_updSnapshot();
+    my @neu = grep { !defined($u->{vorher}{$_}) || $u->{vorher}{$_} ne $jetzt->{$_} }
+              sort keys %$jetzt;
+
+    # Das eigene Modul zuletzt: der laufende Aufruf steckt in genau diesem
+    # Code, und ein reload mittendrin ist unnoetig heikel.
+    my $selbst = "98_Commands.pm";
+    @neu = ((grep { $_ ne $selbst } @neu), (grep { $_ eq $selbst } @neu));
+
+    my @fehler;
+    my @geladen;
+    foreach my $f (@neu) {
+        my $ret = AnalyzeCommand(undef, "reload $f");
+        if(defined($ret) && $ret =~ /\S/) {
+            push @fehler, "reload $f -> $ret";
+            Log3($name, 2, "$name: reload $f fehlgeschlagen: $ret");
+        } else {
+            push @geladen, $f;
+            Log3($name, 3, "$name: $f neu geladen");
+        }
+    }
+
+    # Nacharbeit: "<Modul> = <Befehl>" je Zeile. "*" gilt immer, ein Modulname
+    # nur, wenn genau dieses Modul auch neu geladen wurde.
+    my %ist = map { $_ => 1 } @geladen;
+    my $nach = 0;
+    foreach my $line (split(/\n/, AttrVal($name, "updatePost", ""))) {
+        $line =~ s/\r$//;
+        next if($line !~ /\S/ || $line =~ /^\s*#/);
+        my ($mod, $cmd) = $line =~ /^\s*(\S+)\s*=\s*(.+?)\s*$/;
+        next if(!defined($cmd));
+        $mod .= ".pm" if($mod ne "*" && $mod !~ /\.pm$/);
+        next if($mod ne "*" && !$ist{$mod});
+        my $ret = AnalyzeCommandChain(undef, $cmd);
+        if(defined($ret) && $ret =~ /\S/) {
+            push @fehler, "$cmd -> $ret";
+            Log3($name, 2, "$name: Nacharbeit \"$cmd\" fehlgeschlagen: $ret");
+        } else {
+            $nach++;
+        }
+    }
+
+    my $state = $frist            ? "update: Zeit abgelaufen"
+              : @fehler           ? "update: " . scalar(@fehler) . " Fehler"
+              : @geladen          ? "update: " . scalar(@geladen) . " Modul(e) neu geladen"
+              :                     "update: nichts Neues";
+
+    readingsBeginUpdate($hash);
+    readingsBulkUpdate($hash, "updated",    join(" ", @geladen));
+    readingsBulkUpdate($hash, "updateCount", scalar(@geladen));
+    readingsBulkUpdate($hash, "updatePostCount", $nach);
+    readingsBulkUpdate($hash, "lastError",  @fehler ? join(" | ", @fehler) : "");
+    readingsBulkUpdate($hash, "state",      $state);
+    readingsEndUpdate($hash, 1);
+
+    Log3($name, 3, "$name: $state"
+        . (@geladen ? " (" . join(", ", @geladen) . ")" : ""));
+    return undef;
+}
+
 1;
 
 =pod
@@ -339,6 +520,15 @@ sub Commands_define {
     Standardmaessig stoppt die Ausfuehrung beim ersten fehlerhaften Befehl
     (Attribut <code>stopOnError</code>). Leerzeilen und mit <code>#</code>
     beginnende Zeilen werden ignoriert.
+  </p>
+  <p>
+    Der Set-Befehl <code>update</code> schliesslich fasst den Ablauf
+    <i>update &ndash; warten &ndash; reload &ndash; Nacharbeit</i> zusammen: er
+    stoesst <code>update all</code> an, wartet, bis sich im Modulverzeichnis
+    nichts mehr ruehrt, laedt genau die Module neu, deren Datei sich geaendert
+    hat, und fuehrt anschliessend die zu diesen Modulen hinterlegte Nacharbeit
+    aus (Attribut <code>updatePost</code>). Es muss dabei nichts aufgezaehlt
+    werden &ndash; ein neues Repo faellt von selbst mit auf.
   </p>
 
   <a name="Commandsdefine"></a>
@@ -380,6 +570,31 @@ sub Commands_define {
         }<br>
         </code>
     </li>
+    <li><b>update</b> &ndash; stoesst <code>update all</code> an und raeumt
+        danach selbsttaetig auf. Der Ablauf im Einzelnen:
+        <ol>
+          <li>Zeitstempel und Groesse aller <code>&lt;modpath&gt;/FHEM/NN_*.pm</code>
+              merken.</li>
+          <li><code>update all</code> ausfuehren. Verlangt FHEM dabei einen
+              Neustart, wird <i>abgebrochen</i> (state
+              <code>update: Neustart noetig</code>) &ndash; ein halb geladener
+              Zustand waere schlimmer als ein sichtbar stehengebliebenes
+              Update.</li>
+          <li>Alle 5&nbsp;Sekunden nachsehen, bis sich zwei Runden lang nichts
+              mehr geaendert hat. Damit ist es egal, wie lange das Update
+              braucht und ob es im Hintergrund laeuft
+              (<code>attr global updateInBackground</code>). Spaetestens nach
+              <code>updateTimeout</code> Sekunden wird mit dem gearbeitet, was
+              da ist.</li>
+          <li>Genau die geaenderten Module per <code>reload</code> neu laden
+              &ndash; <code>98_Commands.pm</code> als letztes, weil der laufende
+              Aufruf in eben diesem Code steckt.</li>
+          <li>Die Nacharbeit aus <code>updatePost</code> ausfuehren, aber nur
+              die Zeilen, deren Modul auch wirklich neu geladen wurde.</li>
+        </ol>
+        Es wird also nichts aufgezaehlt und nichts geraten: was sich geaendert
+        hat, sagt das Dateisystem.
+    </li>
   </ul>
   <br>
 
@@ -403,6 +618,31 @@ sub Commands_define {
         Strg+Shift+R.</li>
     <li><b>webLinkLabel</b> &ndash; Beschriftung des Links (Default
         <code>Commands</code>).</li>
+    <li><b>updatePost</b> &ndash; Nacharbeit fuer <code>set &lt;name&gt; update</code>,
+        eine Zeile je Schritt im Format <code>&lt;Modul&gt; = &lt;Befehl&gt;</code>.
+        Der Befehl laeuft nur, wenn genau dieses Modul auch neu geladen wurde;
+        <code>*</code> steht fuer "immer". Die Endung <code>.pm</code> darf
+        weggelassen werden. Leerzeilen und <code>#</code>-Zeilen werden
+        ignoriert, mehrere Zeilen zum selben Modul sind erlaubt und laufen in
+        der angegebenen Reihenfolge.
+        <br><br>
+        <code>
+        98_FHEMVIZ = modify myViz<br>
+        98_FHEMVIZ = set myViz reload<br>
+        98_Gartenbewaesserung = modify bewaesserung<br>
+        # nach jedem Update, egal was sich geaendert hat<br>
+        * = save<br>
+        </code>
+        <br>
+        Das Attribut ist <code>textField-long</code>, laesst sich also bequem
+        im FHEMWEB-Editor pflegen.</li>
+    <li><b>updateTimeout</b> &ndash; Sekunden, nach denen
+        <code>set &lt;name&gt; update</code> spaetestens aufhoert zu warten
+        (Default 180). Reading <code>state</code> lautet dann
+        <code>update: Zeit abgelaufen</code>; die bis dahin geaenderten Module
+        werden trotzdem geladen. Groesser setzen, wenn viele Quellen in
+        <code>controls_*.txt</code> eingetragen sind oder die Leitung langsam
+        ist.</li>
   </ul>
   <br>
 
@@ -410,10 +650,17 @@ sub Commands_define {
   <b>Readings</b>
   <ul>
     <li><b>state</b> &ndash; idle / done (x ok) / error at x / done (x ok, y errors)
-        bzw. nach <code>define</code>: defined (&lt;name&gt;) / define error</li>
+        bzw. nach <code>define</code>: defined (&lt;name&gt;) / define error;
+        waehrend und nach <code>update</code>: update laeuft /
+        update: x Modul(e) neu geladen / update: nichts Neues /
+        update: x Fehler / update: Zeit abgelaufen /
+        update: Neustart noetig</li>
     <li><b>executed</b> &ndash; Anzahl erfolgreich ausgefuehrter Befehle (execute)</li>
     <li><b>errorCount</b> &ndash; Anzahl fehlerhafter Befehle (execute)</li>
     <li><b>lastError</b> &ndash; zuletzt aufgetretener Fehler</li>
+    <li><b>updated</b> &ndash; Dateinamen der zuletzt neu geladenen Module (update)</li>
+    <li><b>updateCount</b> &ndash; Anzahl davon (update)</li>
+    <li><b>updatePostCount</b> &ndash; Anzahl ausgefuehrter Nacharbeits-Befehle (update)</li>
   </ul>
   <p>
     <b>Hinweis:</b> Bei <code>execute</code> muss ein literales Semikolon

@@ -79,25 +79,75 @@ define n_velux_regen notify MQTT2_RAIN_SOLAR:rain:.* {
 - Ein voranstehendes `define`/`defmod` ist optional und wird abgeschnitten.
 - `defmod` legt neu an **oder** aktualisiert – derselbe Block kann zum Ändern erneut eingefügt werden.
 
+### 4. Update mit Nacharbeit (`update`)
+
+Wer mehrere eigene Repos per `update add` eingebunden hat, macht nach jeder
+Änderung immer dasselbe: `update`, warten, `reload <Modul>`, dann das Gerät
+`modify`en oder neu einlesen. Das nimmt **`set <name> update`** ab:
+
+```
+set meineBefehle update
+```
+
+Der Ablauf:
+
+1. Zeitstempel und Größe aller `<modpath>/FHEM/NN_*.pm` merken.
+2. `update all` ausführen. Verlangt FHEM dabei einen **Neustart**, wird
+   abgebrochen (`state` = `update: Neustart noetig`) – ein halb geladener
+   Zustand wäre schlimmer als ein sichtbar stehengebliebenes Update.
+3. Alle 5 s nachsehen, bis sich **zwei Runden lang nichts** mehr geändert hat.
+   Damit ist egal, wie lange das Update braucht und ob es im Hintergrund läuft
+   (`attr global updateInBackground`). Nach `updateTimeout` Sekunden
+   (Standard 180) wird mit dem gearbeitet, was da ist.
+4. Genau die **geänderten** Module per `reload` neu laden – `98_Commands.pm`
+   als letztes, weil der laufende Aufruf in eben diesem Code steckt.
+5. Die Nacharbeit aus `updatePost` ausführen, aber nur die Zeilen, deren Modul
+   auch wirklich neu geladen wurde.
+
+Es wird also **nichts aufgezählt**: was sich geändert hat, sagt das Dateisystem.
+Ein neu hinzugekommenes Repo fällt von selbst mit auf, ohne dass hier etwas
+nachgetragen werden muss.
+
+Die Nacharbeit steht im Attribut `updatePost`, eine Zeile je Schritt im Format
+`<Modul> = <Befehl>` (Endung `.pm` optional, `*` = immer):
+
+```
+98_FHEMVIZ = modify myViz
+98_FHEMVIZ = set myViz reload
+98_Gartenbewaesserung = modify bewaesserung
+# nach jedem Update, egal was sich geändert hat
+* = save
+```
+
+Da der Aufruf asynchron weiterläuft, steht das Ergebnis im Reading `state`
+(`update: 2 Modul(e) neu geladen`), die Dateinamen in `updated`.
+
 ---
 
 ## Attribute
 
-| Attribut       | Standard | Beschreibung                                                                 |
-|----------------|----------|------------------------------------------------------------------------------|
-| `stopOnError`  | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
-| `disable`      | 0        | `1` = Ausführung deaktivieren                                                 |
+| Attribut        | Standard | Beschreibung                                                                 |
+|-----------------|----------|------------------------------------------------------------------------------|
+| `stopOnError`   | 1        | `1` = nach dem ersten Fehler abbrechen, `0` = alle Befehle ausführen          |
+| `disable`       | 0        | `1` = Ausführung deaktivieren                                                 |
+| `updatePost`    | –        | Nacharbeit für `set … update`: je Zeile `<Modul> = <Befehl>`, `*` = immer     |
+| `updateTimeout` | 180      | Sekunden, nach denen `set … update` spätestens aufhört zu warten              |
+| `webLink`       | –        | FHEMWEB-Geräte, in denen ein Link auf die Detailseite eingeblendet wird       |
+| `webLinkLabel`  | Commands | Beschriftung dieses Links                                                     |
 
 ---
 
 ## Readings
 
-| Reading      | Beschreibung                                                            |
-|--------------|-------------------------------------------------------------------------|
-| `state`      | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`; nach `define`: `defined (<name>)` / `define error` |
-| `executed`   | Anzahl erfolgreich ausgeführter Befehle (`execute`)                     |
-| `errorCount` | Anzahl fehlerhafter Befehle des letzten Laufs (`execute`)               |
-| `lastError`  | Zuletzt aufgetretener Fehler (bei `execute` mit Zeilennummer)           |
+| Reading            | Beschreibung                                                            |
+|--------------------|-------------------------------------------------------------------------|
+| `state`            | `idle` / `done (x ok)` / `error at x` / `done (x ok, y errors)`; nach `define`: `defined (<name>)` / `define error`; nach `update`: `update laeuft` / `update: x Modul(e) neu geladen` / `update: nichts Neues` / `update: x Fehler` / `update: Zeit abgelaufen` / `update: Neustart noetig` |
+| `executed`         | Anzahl erfolgreich ausgeführter Befehle (`execute`)                     |
+| `errorCount`       | Anzahl fehlerhafter Befehle des letzten Laufs (`execute`)               |
+| `lastError`        | Zuletzt aufgetretener Fehler (bei `execute` mit Zeilennummer)           |
+| `updated`          | Dateinamen der zuletzt neu geladenen Module (`update`)                  |
+| `updateCount`      | Anzahl davon (`update`)                                                 |
+| `updatePostCount`  | Anzahl ausgeführter Nacharbeits-Befehle (`update`)                      |
 
 ---
 
@@ -105,3 +155,23 @@ define n_velux_regen notify MQTT2_RAIN_SOLAR:rain:.* {
 
 - Bei `execute` muss ein literales Semikolon innerhalb eines Befehls wie in FHEM üblich als `;;` geschrieben werden. Bei `define` ist das **nicht** nötig (einfaches `;` wie im DEF-Editor; `;;`/`\` werden zusätzlich toleriert).
 - `get`-Befehle, die einen Wert zurückliefern, werden als „Fehler" gewertet (nicht-leere Rückgabe). Das Modul ist für ausführende Befehle (`attr`, `define`, `set`, `delete`, …) gedacht.
+
+---
+
+## Tests
+
+Unter `t/` liegen Szenario-Tests für `set … update`, die **ohne
+FHEM-Installation** laufen:
+
+```bash
+perl t/run.pl
+```
+
+`t/FhemStub.pm` ist eine FHEM-Attrappe mit **virtueller Uhr** (`time()` liefert
+`$main::NOW`, `advance()` schiebt vor und feuert dabei die fälligen
+`InternalTimer`). Ein Update, das im Betrieb eine Minute wartet, läuft damit in
+Millisekunden – und der Test kann zwischen zwei Ticks Dateien anfassen, genau
+wie `update` es tut. Geprüft wird unter anderem: nur geänderte Module werden
+geladen, das eigene Modul zuletzt, ein später Schreiber verlängert das Warten,
+der Neustart-Hinweis bricht ab, und ein fehlgeschlagener `reload` überspringt
+seine Nacharbeit.
