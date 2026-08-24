@@ -24,7 +24,7 @@
 # bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
 #
 # Autor:    ahlers2mi
-# Version:  v2.3.0
+# Version:  v2.3.1
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -33,7 +33,7 @@ package main;
 use strict;
 use warnings;
 
-use vars qw($readingFnAttributes $init_done);
+use vars qw($readingFnAttributes $init_done %BC_hash);
 
 # ----------------------------------------------------------------------------
 # Commands_Initialize
@@ -53,7 +53,7 @@ sub Commands_Initialize {
           "webLinkLabel " .
           "webLink " .
           "updatePost:textField-long " .
-          "updateTimeout " .
+          "updateTimeout updateMinWait " .
           $readingFnAttributes;
 }
 
@@ -65,7 +65,7 @@ sub Commands_Define {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
 
-    $hash->{FVERSION} = "98_Commands.pm:v2.3.0";
+    $hash->{FVERSION} = "98_Commands.pm:v2.3.1";
 
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
@@ -165,7 +165,7 @@ sub Commands_updateAttrList {
     my $sel = @web ? "webLink:multiple," . join(",", @web) : "webLink";
     setDevAttrList($name,
         "disable:1,0 stopOnError:1,0 webLinkLabel $sel "
-        . "updatePost:textField-long updateTimeout " . $readingFnAttributes);
+        . "updatePost:textField-long updateTimeout updateMinWait " . $readingFnAttributes);
     return undef;
 }
 
@@ -348,6 +348,41 @@ sub Commands_updSnapshot {
     return \%st;
 }
 
+# fhem.pl selbst - aendert die sich, hilft kein reload, sondern nur ein
+# Neustart. Die Meldung von "update" taugt dafuer NICHT als Merkmal: das
+# 'update finished, "shutdown restart" is needed' schreibt 98_update.pm nach
+# JEDEM Lauf, bei dem irgendetwas geladen wurde.
+sub Commands_updKern {
+    my @s = stat(AttrVal("global", "modpath", ".") . "/fhem.pl");
+    return @s ? "$s[9]/$s[7]" : "?";
+}
+
+# ----------------------------------------------------------------------------
+# Commands_updRunning
+#   Laeuft gerade ein "update" im Hintergrund?
+#
+#   "update" ist bei FHEM standardmaessig ein BlockingCall
+#   (attr global updateInBackground, Default 1) und meldet sich beim Ende
+#   selbst ab: das Kind ruft zuletzt BlockingInformParent("BlockingStart",...),
+#   und der Elternprozess setzt daraufhin {terminated} im Eintrag. Genau das
+#   fragen wir hier ab - dieselbe Bedingung, die auch "blockinginfo" anzeigt.
+#
+#   Warum nicht am Modulverzeichnis ablesen: die ersten rund zehn Sekunden
+#   laedt "update" nur die controls_*.txt uebers Netz und fasst dabei keine
+#   einzige Moduldatei an. Die Ruhe VOR dem Download ist von der Ruhe DANACH
+#   nicht zu unterscheiden - wer nur hinschaut, meldet "nichts Neues", waehrend
+#   die Dateien noch unterwegs sind.
+# ----------------------------------------------------------------------------
+sub Commands_updRunning {
+    my $an = 0;
+    foreach my $h (values %main::BC_hash) {
+        next if(ref($h) ne "HASH" || $h->{terminated} || !$h->{pid});
+        my $fn = ref($h->{fn}) ? ref($h->{fn}) : $h->{fn};
+        $an++ if(defined($fn) && $fn =~ m/doUpdate/);
+    }
+    return $an;
+}
+
 # ----------------------------------------------------------------------------
 # Commands_updStart
 #   set <name> update: "update all" anstossen und danach GENAU die Module neu
@@ -367,31 +402,41 @@ sub Commands_updStart {
     return "update laeuft bereits" if($hash->{helper}{upd});
 
     my $vorher = Commands_updSnapshot();
+    my $kern   = Commands_updKern();
+    my $bg     = AttrVal("global", "updateInBackground", 1) ? 1 : 0;
+
     my $ret = AnalyzeCommand(undef, "update all");
     $ret = "" if(!defined($ret));
 
-    # FHEM sagt selbst, wenn ein Neustart noetig ist (fhem.pl, Kernmodule).
-    # Dann NICHT weitermachen: ein halb geladener Zustand ist schlimmer als
-    # ein Update, das sichtbar stehenbleibt.
-    if($ret =~ /restart/i) {
+    if($ret =~ /already running/i) {
         readingsBeginUpdate($hash);
-        readingsBulkUpdate($hash, "lastError", "FHEM-Neustart noetig - kein reload ausgefuehrt");
-        readingsBulkUpdate($hash, "state",     "update: Neustart noetig");
+        readingsBulkUpdate($hash, "lastError", $ret);
+        readingsBulkUpdate($hash, "state",     "update: laeuft schon");
         readingsEndUpdate($hash, 1);
-        Log3($name, 2, "$name: update verlangt einen FHEM-Neustart, breche ab");
-        return "FHEM-Neustart noetig:\n$ret";
+        return $ret;
     }
 
     $hash->{helper}{upd} = {
-        vorher  => $vorher,
-        letzte  => Commands_updSnapshot(),
-        ruhig   => 0,
-        start   => time(),
-        ausgabe => $ret,
+        vorher   => $vorher,
+        kern     => $kern,
+        letzte   => Commands_updSnapshot(),
+        ruhig    => 0,
+        gesehen  => 0,
+        bg       => $bg,
+        start    => time(),
+        ausgabe  => $ret,
     };
 
+    # Im Vordergrund ist der Befehl beim Ruecksprung schon fertig - dann gibt
+    # es nichts zu beobachten.
+    if(!$bg) {
+        Log3($name, 3, "$name: update all im Vordergrund gelaufen");
+        return Commands_updFinish($hash, 0)
+            || "update fertig - Ergebnis im Reading state";
+    }
+
     readingsSingleUpdate($hash, "state", "update laeuft", 1);
-    Log3($name, 3, "$name: update all angestossen, warte auf Ruhe im Modulverzeichnis");
+    Log3($name, 3, "$name: update all angestossen, warte auf das Ende des Hintergrundlaufs");
 
     InternalTimer(gettimeofday() + 5, "Commands_updTick", $hash, 0);
     return "update laeuft - das Ergebnis steht gleich im Reading state";
@@ -399,9 +444,13 @@ sub Commands_updStart {
 
 # ----------------------------------------------------------------------------
 # Commands_updTick
-#   Alle 5 s nachsehen. Zwei Runden ohne Aenderung = fertig; nach
-#   updateTimeout (Default 180 s) wird abgebrochen und mit dem gearbeitet,
-#   was da ist.
+#   Alle 5 s nachsehen, ob der Hintergrundlauf vorbei ist.
+#
+#   Erste Wahl ist die Prozessliste (Commands_updRunning). Nur wenn dort nie
+#   ein Lauf zu sehen war - etwa weil eine kuenftige FHEM-Fassung das anders
+#   loest - wird ersatzweise das Modulverzeichnis beobachtet, und auch dann
+#   erst nach updateMinWait Sekunden: vorher ist die Ruhe dort nichts wert,
+#   weil "update" in dieser Zeit nur Steuerdateien herunterlaedt.
 # ----------------------------------------------------------------------------
 sub Commands_updTick {
     my ($hash) = @_;
@@ -409,16 +458,28 @@ sub Commands_updTick {
     my $u    = $hash->{helper}{upd};
     return if(!$u);
 
-    my $jetzt = Commands_updSnapshot();
-    my $gleich = (join("\0", map { "$_=$jetzt->{$_}" } sort keys %$jetzt)
-               eq join("\0", map { "$_=$u->{letzte}{$_}" } sort keys %{$u->{letzte}}));
-    $u->{ruhig} = $gleich ? $u->{ruhig} + 1 : 0;
-    $u->{letzte} = $jetzt;
-
+    my $alter = time() - $u->{start};
     my $frist = AttrVal($name, "updateTimeout", 180);
-    if($u->{ruhig} >= 2 || (time() - $u->{start}) > $frist) {
-        return Commands_updFinish($hash, (time() - $u->{start}) > $frist);
+    my $laeuft = Commands_updRunning();
+    $u->{gesehen} = 1 if($laeuft);
+
+    if($u->{gesehen}) {
+        # Der Lauf hat sich selbst abgemeldet -> alle Dateien sind geschrieben.
+        return Commands_updFinish($hash, 0) if(!$laeuft);
+
+    } else {
+        my $jetzt = Commands_updSnapshot();
+        my $gleich = (join("\0", map { "$_=$jetzt->{$_}" } sort keys %$jetzt)
+                   eq join("\0", map { "$_=$u->{letzte}{$_}" } sort keys %{$u->{letzte}}));
+        $u->{ruhig} = $gleich ? $u->{ruhig} + 1 : 0;
+        $u->{letzte} = $jetzt;
+
+        my $mind = AttrVal($name, "updateMinWait", 30);
+        return Commands_updFinish($hash, 0) if($u->{ruhig} >= 2 && $alter >= $mind);
     }
+
+    return Commands_updFinish($hash, 1) if($alter > $frist);
+
     InternalTimer(gettimeofday() + 5, "Commands_updTick", $hash, 0);
     return undef;
 }
@@ -432,6 +493,19 @@ sub Commands_updFinish {
     my $name = $hash->{NAME};
     my $u    = delete $hash->{helper}{upd};
     return if(!$u);
+
+    # fhem.pl selbst getauscht? Dann hilft kein reload. NICHT weitermachen:
+    # ein halb geladener Zustand ist schlimmer als ein Update, das sichtbar
+    # stehenbleibt.
+    if(Commands_updKern() ne $u->{kern}) {
+        readingsBeginUpdate($hash);
+        readingsBulkUpdate($hash, "lastError",
+            "fhem.pl wurde getauscht - shutdown restart noetig, kein reload ausgefuehrt");
+        readingsBulkUpdate($hash, "state", "update: Neustart noetig");
+        readingsEndUpdate($hash, 1);
+        Log3($name, 2, "$name: fhem.pl wurde getauscht, kein reload - shutdown restart noetig");
+        return undef;
+    }
 
     my $jetzt = Commands_updSnapshot();
     my @neu = grep { !defined($u->{vorher}{$_}) || $u->{vorher}{$_} ne $jetzt->{$_} }
@@ -574,18 +648,27 @@ sub Commands_updFinish {
         danach selbsttaetig auf. Der Ablauf im Einzelnen:
         <ol>
           <li>Zeitstempel und Groesse aller <code>&lt;modpath&gt;/FHEM/NN_*.pm</code>
-              merken.</li>
-          <li><code>update all</code> ausfuehren. Verlangt FHEM dabei einen
-              Neustart, wird <i>abgebrochen</i> (state
-              <code>update: Neustart noetig</code>) &ndash; ein halb geladener
+              und von <code>fhem.pl</code> merken.</li>
+          <li><code>update all</code> ausfuehren.</li>
+          <li>Warten, bis der Lauf zu Ende ist. <code>update</code> laeuft bei
+              FHEM standardmaessig im Hintergrund
+              (<code>attr global updateInBackground</code>, Default 1) und
+              meldet sich am Ende selbst ab; genau das wird abgefragt (dieselbe
+              Bedingung, die <code>blockinginfo</code> anzeigt).
+              <b>Nicht</b> das Modulverzeichnis: die ersten rund zehn Sekunden
+              laedt <code>update</code> nur die <code>controls_*.txt</code>
+              uebers Netz und fasst keine einzige Moduldatei an &ndash; die Ruhe
+              davor ist von der Ruhe danach nicht zu unterscheiden. Spaetestens
+              nach <code>updateTimeout</code> Sekunden wird mit dem gearbeitet,
+              was da ist.</li>
+          <li>Wurde <code>fhem.pl</code> selbst getauscht, wird
+              <i>abgebrochen</i> (state <code>update: Neustart noetig</code>)
+              &ndash; da hilft kein <code>reload</code>, und ein halb geladener
               Zustand waere schlimmer als ein sichtbar stehengebliebenes
-              Update.</li>
-          <li>Alle 5&nbsp;Sekunden nachsehen, bis sich zwei Runden lang nichts
-              mehr geaendert hat. Damit ist es egal, wie lange das Update
-              braucht und ob es im Hintergrund laeuft
-              (<code>attr global updateInBackground</code>). Spaetestens nach
-              <code>updateTimeout</code> Sekunden wird mit dem gearbeitet, was
-              da ist.</li>
+              Update. Die Meldung
+              <code>update finished, "shutdown restart" is needed</code> taugt
+              dafuer <b>nicht</b>: die schreibt FHEM nach jedem Lauf, bei dem
+              irgendetwas geladen wurde.</li>
           <li>Genau die geaenderten Module per <code>reload</code> neu laden
               &ndash; <code>98_Commands.pm</code> als letztes, weil der laufende
               Aufruf in eben diesem Code steckt.</li>
@@ -643,6 +726,11 @@ sub Commands_updFinish {
         werden trotzdem geladen. Groesser setzen, wenn viele Quellen in
         <code>controls_*.txt</code> eingetragen sind oder die Leitung langsam
         ist.</li>
+    <li><b>updateMinWait</b> &ndash; Notnagel (Default 30). Nur wirksam, wenn
+        sich der Hintergrundlauf gar nicht auffinden laesst; dann wird
+        ersatzweise das Modulverzeichnis beobachtet, aber fruehestens nach so
+        vielen Sekunden entschieden. Im Normalfall wird das Attribut nie
+        gebraucht.</li>
   </ul>
   <br>
 
@@ -654,7 +742,7 @@ sub Commands_updFinish {
         waehrend und nach <code>update</code>: update laeuft /
         update: x Modul(e) neu geladen / update: nichts Neues /
         update: x Fehler / update: Zeit abgelaufen /
-        update: Neustart noetig</li>
+        update: Neustart noetig / update: laeuft schon</li>
     <li><b>executed</b> &ndash; Anzahl erfolgreich ausgefuehrter Befehle (execute)</li>
     <li><b>errorCount</b> &ndash; Anzahl fehlerhafter Befehle (execute)</li>
     <li><b>lastError</b> &ndash; zuletzt aufgetretener Fehler</li>
