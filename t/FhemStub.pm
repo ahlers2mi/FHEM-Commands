@@ -22,6 +22,12 @@ our @CMD;        # ausgefuehrte FHEM-Befehle
 our %CMDRET;     # Befehl (Regex-String) -> Rueckgabe
 our @TIMER;      # [zeit, funktion, arg]
 
+# Prozessliste von Blocking.pm. Ein laufendes "update" steht hier als Eintrag
+# mit fn=doUpdateInBackground; beim Ende setzt FHEM {terminated}.
+our %BC_hash;
+sub bc_start { $BC_hash{1} = { pid => 4711, fn => "doUpdateInBackground" }; }
+sub bc_ende  { $BC_hash{1}{terminated} = 1 if($BC_hash{1}); }
+
 sub time_now { return $NOW; }
 BEGIN { *CORE::GLOBAL::time = sub { return $main::NOW; }; }
 
@@ -57,6 +63,9 @@ sub readingsSingleUpdate {
 sub AnalyzeCommand {
     my ($cl, $cmd) = @_;
     push @CMD, $cmd;
+    # "update all" laeuft bei FHEM per Default im Hintergrund: der Befehl kehrt
+    # sofort zurueck, der Eintrag in %BC_hash steht aber schon.
+    bc_start() if($cmd =~ /^update / && AttrVal("global","updateInBackground",1));
     foreach my $re (keys %CMDRET) { return $CMDRET{$re} if($cmd =~ /$re/); }
     return undef;
 }
