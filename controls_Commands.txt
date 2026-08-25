@@ -1,2 +1,2 @@
-UPD 2026-08-24_19:13:02 35713 FHEM/98_Commands.pm
-UPD 2026-08-24_19:13:02 2813 www/pgm2/fhemweb_custom_link.js
+UPD 2026-08-25_07:22:03 35713 FHEM/98_Commands.pm
+UPD 2026-08-25_07:22:03 2813 www/pgm2/fhemweb_custom_link.js
