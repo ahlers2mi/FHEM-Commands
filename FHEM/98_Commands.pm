@@ -24,7 +24,7 @@
 # bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
 #
 # Autor:    ahlers2mi
-# Version:  v2.3.1
+# Version:  v2.3.2
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -65,7 +65,7 @@ sub Commands_Define {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
 
-    $hash->{FVERSION} = "98_Commands.pm:v2.3.1";
+    $hash->{FVERSION} = "98_Commands.pm:v2.3.2";
 
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
