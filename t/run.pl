@@ -293,5 +293,75 @@ ok("14 state meldet Fehler", zustand() =~ /Fehler/);
 ok("14 lastError nennt das Geraet",
    $hash->{READINGS}{lastError}{VAL} =~ /modify myViz -> Wrong syntax/);
 
+# ---------------------------------------------------------------------------
+# 15: Ausgabe ist kein Fehler.
+#     Anlass aus dem Betrieb (08.09.2026): ein Block mit "restore ..." brach
+#     nach der ersten Zeile ab - mit "abgebrochen nach Fehler (0 ok)", obwohl
+#     der restore geglueckt war. FHEMs Regel "leer = ok, Text = Fehler" gilt
+#     eben nicht ueberall; restore berichtet, was es kopiert hat.
+# ---------------------------------------------------------------------------
+aufbau();
+$main::CMDRET{'^restore '} = "restore ./FHEM/48_MieleAtHome.pm\n\nrestore finished";
+my $ret = Commands_run($hash, "restore update/2026-09-08/FHEM/48_MieleAtHome.pm\n"
+                            . "restore update/2026-09-08/FHEM/74_Unifi.pm\n"
+                            . "attr global exclude_from_update 36_JeeLink.pm");
+is("15 alle drei Zeilen gelaufen", $hash->{READINGS}{executed}{VAL}, 3);
+is("15 kein Fehler",              $hash->{READINGS}{errorCount}{VAL}, 0);
+is("15 state",                    zustand(), "done (3 ok)");
+ok("15 die Ausgabe geht nicht verloren", $ret =~ /Ausgaben:/ && $ret =~ /restore finished/);
+ok("15 lastOutput gefuellt",
+   ($hash->{READINGS}{lastOutput}{VAL} || "") =~ /48_MieleAtHome/);
+ok("15 der dritte Befehl kam an", grep { /^attr global/ } @main::CMD);
+
+# ---------------------------------------------------------------------------
+# 16: ein echter Fehler bleibt ein Fehler - sonst waere die Nachsicht wertlos
+# ---------------------------------------------------------------------------
+aufbau();
+$main::CMDRET{'^attr '} = "Unknown attribute quatsch";
+Commands_run($hash, "attr global quatsch 1\nattr global noch_eins 2");
+is("16 bricht ab",   $hash->{READINGS}{executed}{VAL}, 0);
+is("16 zaehlt Fehler", $hash->{READINGS}{errorCount}{VAL}, 1);
+ok("16 lastError gefuellt",
+   $hash->{READINGS}{lastError}{VAL} =~ /Unknown attribute/);
+
+# ---------------------------------------------------------------------------
+# 17: das Minus vor der Zeile deckt den Einzelfall ab, den die Liste nicht kennt
+# ---------------------------------------------------------------------------
+aufbau();
+$main::CMDRET{'^rauschen'} = "irgendein Geschwaetz";
+Commands_run($hash, "-rauschen bitte\nrauschen nochmal");
+is("17 die Minus-Zeile zaehlt als ok", $hash->{READINGS}{executed}{VAL}, 1);
+is("17 die andere als Fehler",         $hash->{READINGS}{errorCount}{VAL}, 1);
+ok("17 das Minus wird abgeschnitten",
+   (grep { $_ eq "rauschen bitte" } @main::CMD) ? 1 : 0);
+
+# ---------------------------------------------------------------------------
+# 18: leeres outputCommands stellt das alte Verhalten wieder her
+# ---------------------------------------------------------------------------
+aufbau();
+$main::attr{myCommander}{outputCommands} = "";
+$main::CMDRET{'^restore '} = "restore finished";
+Commands_run($hash, "restore update/x/FHEM/y.pm");
+is("18 ohne Liste ist restore wieder ein Fehler",
+   $hash->{READINGS}{errorCount}{VAL}, 1);
+
+# ---------------------------------------------------------------------------
+# 19: eigene Liste - "get" ist bewusst NICHT im Standard
+# ---------------------------------------------------------------------------
+aufbau();
+$main::CMDRET{'^get '} = "Wert 42";
+Commands_run($hash, "get irgendwas");
+is("19 get ist im Standard ein Fehler", $hash->{READINGS}{errorCount}{VAL}, 1);
+aufbau();
+$main::attr{myCommander}{outputCommands} = "restore get";
+$main::CMDRET{'^get '} = "Wert 42";
+Commands_run($hash, "get irgendwas");
+is("19 mit get in der Liste ist es Ausgabe", $hash->{READINGS}{errorCount}{VAL}, 0);
+
+# ---------------------------------------------------------------------------
+# 20: die Version steht nur noch in der Kopfzeile
+# ---------------------------------------------------------------------------
+ok("20 Version aus dem Dateikopf", Commands_Version() =~ /^\d+\.\d+\.\d+$/);
+
 print "\n$tests Tests, $bad Fehler\n";
 exit($bad ? 1 : 0);
