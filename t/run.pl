@@ -361,7 +361,25 @@ is("19 mit get in der Liste ist es Ausgabe", $hash->{READINGS}{errorCount}{VAL},
 # ---------------------------------------------------------------------------
 # 20: die Version steht nur noch in der Kopfzeile
 # ---------------------------------------------------------------------------
-ok("20 Version aus dem Dateikopf", Commands_Version() =~ /^\d+\.\d+\.\d+$/);
+# Nur das Format zu pruefen war zu wenig: die Version stimmte, das Internal
+# FVERSION blieb trotzdem hart verdrahtet auf einem alten Wert stehen, weil die
+# Ersetzung dieser einen Zeile beim Umbau nicht gegriffen hatte. Deshalb wird
+# die Kopfzeile hier UNABHAENGIG eingelesen und gegen beides gehalten.
+my $kopfversion;
+if(open(my $vfh, "<", "$FindBin::Bin/../FHEM/98_Commands.pm")) {
+    while(my $l = <$vfh>) {
+        if($l =~ /^#\s*Version:\s*v(\d+\.\d+\.\d+)/) { $kopfversion = $1; last; }
+    }
+    close($vfh);
+}
+ok("20 Kopfzeile enthaelt eine Version", defined($kopfversion));
+is("20 Commands_Version liest die Kopfzeile", Commands_Version(), $kopfversion);
+
+aufbau();
+my $vhash = { NAME => "verstest", READINGS => {} };
+Commands_Define($vhash, "verstest Commands");
+is("20 FVERSION nutzt dieselbe Version",
+   $vhash->{FVERSION}, "98_Commands.pm:v$kopfversion");
 
 print "\n$tests Tests, $bad Fehler\n";
 exit($bad ? 1 : 0);
