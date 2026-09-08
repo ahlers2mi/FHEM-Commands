@@ -24,7 +24,7 @@
 # bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
 #
 # Autor:    ahlers2mi
-# Version:  v2.4.0  (steht nur hier - $VERSION liest sie von dieser Zeile)
+# Version:  v2.4.1  (steht nur hier - Commands_Version() liest sie von hier)
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -36,16 +36,12 @@ use warnings;
 use vars qw($readingFnAttributes $init_done %BC_hash %defs);
 
 # ----------------------------------------------------------------------------
-# Commands_Initialize
-#   Wird von FHEM beim Laden des Moduls aufgerufen.
-# ----------------------------------------------------------------------------
-# ----------------------------------------------------------------------------
 # Commands_Version
 #   Liest die Version aus der Kopfzeile "# Version:  vX.Y.Z". Vorher stand sie
 #   an zwei Stellen, und beim Anheben vergisst man zuverlaessig die zweite.
 # ----------------------------------------------------------------------------
 {
-    my $FALLBACK = "2.4.0";
+    my $FALLBACK = "2.4.1";
     my $cached;
     sub Commands_Version {
         return $cached if(defined($cached));
@@ -68,6 +64,10 @@ use vars qw($readingFnAttributes $init_done %BC_hash %defs);
 # ein execute-Block an der ersten solchen Zeile ab, obwohl nichts schiefging.
 my $AUSGABE_BEFEHLE = "restore list help version apptime jsonlist2 blockinginfo fileinfo";
 
+# ----------------------------------------------------------------------------
+# Commands_Initialize
+#   Wird von FHEM beim Laden des Moduls aufgerufen.
+# ----------------------------------------------------------------------------
 sub Commands_Initialize {
     my ($hash) = @_;
 
@@ -95,7 +95,7 @@ sub Commands_Define {
     my ($hash, $def) = @_;
     my @param = split('[ \t]+', $def);
 
-    $hash->{FVERSION} = "98_Commands.pm:v2.3.2";
+    $hash->{FVERSION} = "98_Commands.pm:v" . Commands_Version();
 
     return "Usage: define <name> Commands" if(int(@param) != 2);
 
