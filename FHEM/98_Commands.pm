@@ -24,7 +24,7 @@
 # bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
 #
 # Autor:    ahlers2mi
-# Version:  v2.3.2
+# Version:  v2.4.0  (steht nur hier - $VERSION liest sie von dieser Zeile)
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -39,6 +39,35 @@ use vars qw($readingFnAttributes $init_done %BC_hash %defs);
 # Commands_Initialize
 #   Wird von FHEM beim Laden des Moduls aufgerufen.
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Commands_Version
+#   Liest die Version aus der Kopfzeile "# Version:  vX.Y.Z". Vorher stand sie
+#   an zwei Stellen, und beim Anheben vergisst man zuverlaessig die zweite.
+# ----------------------------------------------------------------------------
+{
+    my $FALLBACK = "2.4.0";
+    my $cached;
+    sub Commands_Version {
+        return $cached if(defined($cached));
+        $cached = $FALLBACK;
+        if(open(my $fh, "<", __FILE__)) {
+            my $n = 0;
+            while(my $l = <$fh>) {
+                last if(++$n > 60);
+                if($l =~ /^#\s*Version:\s*v(\d+\.\d+\.\d+)/) { $cached = $1; last; }
+            }
+            close($fh);
+        }
+        return $cached;
+    }
+}
+
+# Befehle, deren Rueckgabe eine AUSGABE ist und kein Fehler. FHEMs Regel
+# "leer = ok, Text = Fehler" gilt eben nicht ueberall: "restore" berichtet,
+# was es kopiert hat, "list" gibt die Liste zurueck. Ohne diese Liste bricht
+# ein execute-Block an der ersten solchen Zeile ab, obwohl nichts schiefging.
+my $AUSGABE_BEFEHLE = "restore list help version apptime jsonlist2 blockinginfo fileinfo";
+
 sub Commands_Initialize {
     my ($hash) = @_;
 
@@ -50,6 +79,7 @@ sub Commands_Initialize {
     $hash->{AttrList} =
           "disable:1,0 " .
           "stopOnError:1,0 " .
+          "outputCommands " .
           "webLinkLabel " .
           "webLink " .
           "updatePost:textField-long " .
@@ -227,7 +257,15 @@ sub Commands_run {
 
     my $stopOnError = AttrVal($name, "stopOnError", 1);
 
+    # Befehle, deren Rueckgabe eine Ausgabe ist und kein Fehler. Ein leeres
+    # Attribut schaltet die Nachsicht ab - dann gilt wieder jede Rueckgabe
+    # als Fehler, wie in den Fassungen bis v2.3.2.
+    my %ausgabeBefehl = map { lc($_) => 1 }
+                        grep { /\S/ }
+                        split(/[\s,]+/, AttrVal($name, "outputCommands", $AUSGABE_BEFEHLE));
+
     my @errors;
+    my @ausgaben;
     my $done = 0;
     my $no   = 0;
 
@@ -240,18 +278,34 @@ sub Commands_run {
         $line =~ s/\s+$//;
         next if($line eq "" || $line =~ /^#/);
 
+        # "-" davor: die Rueckgabe DIESER Zeile zaehlt nie als Fehler, egal
+        # welcher Befehl es ist. Fuer den Einzelfall, den die Liste nicht kennt.
+        my $egal = ($line =~ s/^-\s*//) ? 1 : 0;
+        next if($line eq "");
+
         $no++;
         my $ret = AnalyzeCommandChain(undef, $line);
         $ret = "" if(!defined($ret));
 
-        if($ret =~ /\S/) {
-            push @errors, "Zeile $no: $line\n  -> $ret";
-            readingsBulkUpdate($hash, "lastError", "($no) $line -> $ret");
-            Log3($name, 2, "$name: Fehler in Zeile $no \"$line\": $ret");
-            last if($stopOnError);
-        } else {
+        if($ret !~ /\S/) {          # der Normalfall: nichts gesagt, also gut
             $done++;
+            next;
         }
+
+        my ($befehl) = $line =~ /^(\S+)/;
+        $befehl = defined($befehl) ? lc($befehl) : "";
+
+        if($egal || $ausgabeBefehl{$befehl}) {
+            $done++;
+            push @ausgaben, "Zeile $no: $line\n  -> $ret";
+            Log3($name, 4, "$name: Ausgabe in Zeile $no \"$line\": $ret");
+            next;
+        }
+
+        push @errors, "Zeile $no: $line\n  -> $ret";
+        readingsBulkUpdate($hash, "lastError", "($no) $line -> $ret");
+        Log3($name, 2, "$name: Fehler in Zeile $no \"$line\": $ret");
+        last if($stopOnError);
     }
 
     my $errCount = scalar(@errors);
@@ -261,17 +315,22 @@ sub Commands_run {
 
     readingsBulkUpdate($hash, "executed",   $done);
     readingsBulkUpdate($hash, "errorCount", $errCount);
+    readingsBulkUpdate($hash, "lastOutput", substr(join("\n", @ausgaben), 0, 900));
     readingsBulkUpdate($hash, "state",      $state);
     readingsEndUpdate($hash, 1);
+
+    # Die Ausgaben gehoeren mit in die Antwort - sonst fuehrt man "restore"
+    # im Block aus und erfaehrt nicht, was es getan hat.
+    my $anhang = @ausgaben ? "\n\nAusgaben:\n" . join("\n", @ausgaben) : "";
 
     if($errCount) {
         my $head = $stopOnError
             ? "abgebrochen nach Fehler ($done ok):"
             : "$done ok, $errCount Fehler:";
-        return "$head\n" . join("\n", @errors);
+        return "$head\n" . join("\n", @errors) . $anhang;
     }
 
-    return "$done Befehl(e) erfolgreich ausgefuehrt";
+    return "$done Befehl(e) erfolgreich ausgefuehrt" . $anhang;
 }
 
 # ----------------------------------------------------------------------------
@@ -678,6 +737,24 @@ sub Commands_updFinish {
         attr poolControl inflowSensor MQTT2_Sonoff_TH10_01:solarTemp<br>
         set poolControl targetTemp 30<br>
         </code>
+        <br>
+        Eine Zeile gilt als fehlerhaft, wenn der Befehl etwas
+        zurueckgibt &ndash; so ist es in FHEM vereinbart: leere Rueckgabe heisst
+        ok. Nicht jeder Befehl haelt sich daran: <code>restore</code> berichtet,
+        was es kopiert hat, <code>list</code> gibt die Liste zurueck. Solche
+        Rueckgaben zaehlen als <i>Ausgabe</i> statt als Fehler, wenn der Befehl
+        in <code>outputCommands</code> steht; sie erscheinen dann unter
+        &bdquo;Ausgaben&ldquo; am Ende der Antwort und im Reading
+        <code>lastOutput</code>.
+        <br><br>
+        Fuer den Einzelfall, den die Liste nicht kennt, genuegt ein
+        <b><code>-</code> vor der Zeile</b> &ndash; dann wird deren Rueckgabe nie
+        als Fehler gewertet:
+        <br><br>
+        <code>
+        -apptime clear<br>
+        set myExport export<br>
+        </code>
     </li>
     <li><b>define</b> &ndash; oeffnet das Eingabefenster; legt <i>ein</i> Geraet
         aus der (auch mehrzeiligen) Definition per <code>defmod</code> an bzw.
@@ -739,6 +816,19 @@ sub Commands_updFinish {
   <ul>
     <li><b>stopOnError</b> 1|0 &ndash; bei 1 (Standard) wird nach dem ersten
         fehlerhaften Befehl abgebrochen, bei 0 werden alle Befehle ausgefuehrt</li>
+    <li><b>outputCommands</b> &ndash; Befehle, deren Rueckgabe eine
+        <i>Ausgabe</i> ist und kein Fehler; durch Leerzeichen oder Komma
+        getrennt, ohne Beachtung der Gross-/Kleinschreibung. Verglichen wird
+        das erste Wort der Zeile.
+        <br>
+        Standard: <code>restore list help version apptime jsonlist2
+        blockinginfo fileinfo</code>
+        <br>
+        <code>get</code> steht bewusst <b>nicht</b> darin: ein misslungenes
+        <code>get</code> meldet sich genauso, und dieser Fehler soll sichtbar
+        bleiben. Wer es anders will, nimmt es in die Liste auf. Ein
+        <b>leeres</b> Attribut schaltet die Nachsicht ganz ab &ndash; dann gilt
+        wieder jede Rueckgabe als Fehler, wie bis v2.3.2.</li>
     <li><b>disable</b> 1|0 &ndash; deaktiviert die Ausfuehrung</li>
     <li><b>webCmd execute</b> &ndash; (FHEMWEB-Standardattribut) zeigt das
         Eingabefeld direkt in der Geraeteuebersicht an, sodass man das Geraet
@@ -812,6 +902,8 @@ sub Commands_updFinish {
     <li><b>executed</b> &ndash; Anzahl erfolgreich ausgefuehrter Befehle (execute)</li>
     <li><b>errorCount</b> &ndash; Anzahl fehlerhafter Befehle (execute)</li>
     <li><b>lastError</b> &ndash; zuletzt aufgetretener Fehler</li>
+    <li><b>lastOutput</b> &ndash; die gesammelten Ausgaben des letzten
+        <code>execute</code> (auf 900 Zeichen gekuerzt)</li>
     <li><b>updated</b> &ndash; Dateinamen der zuletzt neu geladenen Module (update)</li>
     <li><b>updateCount</b> &ndash; Anzahl davon (update)</li>
     <li><b>updatePostCount</b> &ndash; Anzahl ausgefuehrter Nacharbeits-Befehle (update)</li>
