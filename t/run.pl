@@ -359,6 +359,30 @@ Commands_run($hash, "get irgendwas");
 is("19 mit get in der Liste ist es Ausgabe", $hash->{READINGS}{errorCount}{VAL}, 0);
 
 # ---------------------------------------------------------------------------
+# 19b: deletereading meldet Erfolg als Text.
+#     Anlass (23.09.2026): "deletereading mySolvis test" brach den Block ab,
+#     obwohl das Reading geloescht war - die Zeile danach lief nicht.
+#     Ein Tippfehler im Geraetenamen muss aber weiter abbrechen.
+# ---------------------------------------------------------------------------
+aufbau();
+$main::CMDRET{'^deletereading mySolvis'} = "Deleted reading test for device mySolvis";
+$main::CMDRET{'^deletereading zwei'} = "Deleted reading a for device zwei\nDeleted reading b for device zwei";
+Commands_run($hash, "deletereading mySolvis test\ndeletereading zwei (a|b)\nattr mySolvis vizReadings x");
+is("19b alle drei Zeilen gelaufen", $hash->{READINGS}{executed}{VAL}, 3);
+is("19b kein Fehler",               $hash->{READINGS}{errorCount}{VAL}, 0);
+ok("19b die Meldung steht in lastOutput",
+   ($hash->{READINGS}{lastOutput}{VAL} || "") =~ /Deleted reading test/);
+aufbau();
+$main::CMDRET{'^deletereading '} = "Please define tippfehler first";
+Commands_run($hash, "deletereading tippfehler test\nattr global x 1");
+is("19b Tippfehler bricht ab",      $hash->{READINGS}{errorCount}{VAL}, 1);
+is("19b danach lief nichts",        $hash->{READINGS}{executed}{VAL}, 0);
+aufbau();
+$main::CMDRET{'^deletereading '} = "Deleted reading a for device gut\nPlease define schlecht first";
+Commands_run($hash, "deletereading gut,schlecht a");
+is("19b gemischt ist ein Fehler",   $hash->{READINGS}{errorCount}{VAL}, 1);
+
+# ---------------------------------------------------------------------------
 # 20: die Version steht nur noch in der Kopfzeile
 # ---------------------------------------------------------------------------
 # Nur das Format zu pruefen war zu wenig: die Version stimmte, das Internal
