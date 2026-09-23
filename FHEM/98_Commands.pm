@@ -24,7 +24,7 @@
 # bekommt es ueber die Query der Script-URL (?dev=<Geraet>&label=<Label>).
 #
 # Autor:    ahlers2mi
-# Version:  v2.4.1  (steht nur hier - Commands_Version() liest sie von hier)
+# Version:  v2.4.2  (steht nur hier - Commands_Version() liest sie von hier)
 # Lizenz:   GPL v2 oder hoeher (wie FHEM)
 ##############################################################################
 
@@ -63,6 +63,25 @@ use vars qw($readingFnAttributes $init_done %BC_hash %defs);
 # was es kopiert hat, "list" gibt die Liste zurueck. Ohne diese Liste bricht
 # ein execute-Block an der ersten solchen Zeile ab, obwohl nichts schiefging.
 my $AUSGABE_BEFEHLE = "restore list help version apptime jsonlist2 blockinginfo fileinfo";
+
+# Erfolgsmeldungen, die FHEM als Text zurueckgibt. Besteht die Rueckgabe einer
+# Zeile NUR aus solchen Zeilen, war der Befehl erfolgreich. Anders als bei
+# outputCommands bleibt ein echter Fehler desselben Befehls ein Fehler:
+# "deletereading tippfehler x" meldet "Please define tippfehler first".
+my @ERFOLG_ZEILEN = (
+    qr/^Deleted reading \S+ for device \S+$/,     # deletereading
+);
+
+sub Commands_istErfolg {
+    my ($ret) = @_;
+    my @z = grep { /\S/ } split(/\n/, $ret);
+    return 0 if(!@z);
+    foreach my $l (@z) {
+        $l =~ s/^\s+|\s+$//g;
+        return 0 if(!grep { $l =~ $_ } @ERFOLG_ZEILEN);
+    }
+    return 1;
+}
 
 # ----------------------------------------------------------------------------
 # Commands_Initialize
@@ -295,7 +314,7 @@ sub Commands_run {
         my ($befehl) = $line =~ /^(\S+)/;
         $befehl = defined($befehl) ? lc($befehl) : "";
 
-        if($egal || $ausgabeBefehl{$befehl}) {
+        if($egal || $ausgabeBefehl{$befehl} || Commands_istErfolg($ret)) {
             $done++;
             push @ausgaben, "Zeile $no: $line\n  -> $ret";
             Log3($name, 4, "$name: Ausgabe in Zeile $no \"$line\": $ret");
@@ -746,6 +765,12 @@ sub Commands_updFinish {
         in <code>outputCommands</code> steht; sie erscheinen dann unter
         &bdquo;Ausgaben&ldquo; am Ende der Antwort und im Reading
         <code>lastOutput</code>.
+        <br><br>
+        Einige Befehle melden auch ihren <i>Erfolg</i> als Text, etwa
+        <code>deletereading</code> mit &bdquo;Deleted reading &hellip; for device
+        &hellip;&ldquo;. Besteht die Rueckgabe nur aus solchen Meldungen, zaehlt
+        die Zeile als ok (ab v2.4.2); ein echter Fehler desselben Befehls
+        (&bdquo;Please define &hellip; first&ldquo;) bricht weiter ab.
         <br><br>
         Fuer den Einzelfall, den die Liste nicht kennt, genuegt ein
         <b><code>-</code> vor der Zeile</b> &ndash; dann wird deren Rueckgabe nie
